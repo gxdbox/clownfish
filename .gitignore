@@ -1,0 +1,5 @@
+# 调试/临时产物
+.shot/
+.tmp_screens/
+.tmp_*
+.DS_Store

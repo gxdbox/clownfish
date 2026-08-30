@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Clownfish 像素肉鸽求生</title>
+<style>
+  /* ===== 基础重置 ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0e1a;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+  #game-canvas {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    image-rendering: pixelated;
+    /* 适配刘海屏安全区 */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #error-overlay {
+    display: none;
+    position: fixed; top: 10px; left: 10px; right: 10px;
+    background: rgba(180, 30, 30, 0.92); color: #fff;
+    font-size: 12px; line-height: 1.5;
+    padding: 10px 12px; border-radius: 8px;
+    z-index: 999; white-space: pre-wrap; word-break: break-all;
+  }
+  #loader {
+    position: fixed; inset: 0; z-index: 998;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #0a0e1a; color: #7fd7ff;
+    font-size: 14px; letter-spacing: 2px;
+  }
+  #loader .fish { font-size: 40px; animation: swim 1.2s ease-in-out infinite; }
+  #loader .tip { margin-top: 10px; color: #4a6a8a; font-size: 12px; }
+  @keyframes swim {
+    0%, 100% { transform: translateY(0) rotate(-4deg); }
+    50% { transform: translateY(-8px) rotate(4deg); }
+  }
+</style>
+</head>
+<body>
+<div id="loader">
+  <div class="fish">🐟</div>
+  <div>CLOWNFISH</div>
+  <div class="tip">加载中…</div>
+</div>
+<div id="error-overlay"></div>
+<canvas id="game-canvas"></canvas>
+
+<!--
+  加载顺序约定（严格依赖顺序，禁止调整）：
+  config(常量) → util(工具) → sprites(精灵) → audio(音频) → input(输入)
+  → camera(相机) → world(世界/地形) → entities(玩家) → enemies(敌人)
+  → projectiles(子弹) → pickups(拾取物) → fx(特效) → spawner(生成器)
+  → upgrades(升级) → ui(界面) → game(状态机/主循环) → main(入口)
+-->
+<script defer src="src/config.js"></script>
+<script defer src="src/util.js"></script>
+<script defer src="src/sprites.js"></script>
+<script defer src="src/audio.js"></script>
+<script defer src="src/input.js"></script>
+<script defer src="src/camera.js"></script>
+<script defer src="src/world.js"></script>
+<script defer src="src/entities.js"></script>
+<script defer src="src/enemies.js"></script>
+<script defer src="src/projectiles.js"></script>
+<script defer src="src/pickups.js"></script>
+<script defer src="src/fx.js"></script>
+<script defer src="src/spawner.js"></script>
+<script defer src="src/upgrades.js"></script>
+<script defer src="src/ui.js"></script>
+<script defer src="src/game.js"></script>
+<script defer src="src/main.js"></script>
+</body>
+</html>

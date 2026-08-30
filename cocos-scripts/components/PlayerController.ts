@@ -1,0 +1,334 @@
+/**
+ * PlayerController.ts — 玩家行为（移动/自动攻击/受击/护盾/升级/拾取效果）
+ * 挂在 Player 预制体上。
+ * Cocos Creator 3.8.8 迁移版
+ */
+import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3 } from 'cc';
+import { clamp } from '../util';
+import { PLAYER, BULLET, PICKUP, WORLD, GameState } from '../config';
+import type { WorldManager } from '../managers/WorldManager';
+import type { AudioManager } from '../managers/AudioManager';
+import type { GameManager } from '../managers/GameManager';
+import type { Joystick } from './Joystick';
+import type { CameraFollow } from './CameraFollow';
+const { ccclass, property } = _decorator;
+
+/** 升级选项 */
+export interface UpgradeChoice {
+    id: string;
+    name: string;
+    desc: string;
+    icon: string;
+}
+
+@ccclass('PlayerController')
+export class PlayerController extends Component {
+
+    // ===== 编辑器属性 =====
+    @property(Prefab) bulletPrefab: Prefab | null = null;
+
+    // ===== 运行时引用（由 GameManager 注入） =====
+    worldManager: WorldManager | null = null;
+    audioManager: AudioManager | null = null;
+    gameManager: GameManager | null = null;
+    joystick: Joystick | null = null;
+    cameraFollow: CameraFollow | null = null;
+    entityManager: Node | null = null; // 子弹/特效的父节点
+
+    // ===== 玩家属性 =====
+    maxHp = PLAYER.MAX_HP;
+    hp = PLAYER.MAX_HP;
+    level = 1;
+    exp = 0;
+    expNext = 12; // 8 + 1 * 4
+    speed = PLAYER.SPEED;
+    fireInterval = PLAYER.FIRE_INTERVAL;
+    bulletSpeed = PLAYER.BULLET_SPEED;
+    bulletCount = PLAYER.BULLET_COUNT;
+    bulletDamage = PLAYER.BULLET_DAMAGE;
+    bulletRange = PLAYER.BULLET_RANGE;
+    pierce = BULLET.PIERCE_DEFAULT;
+    pickupRange = PLAYER.PICKUP_RANGE;
+    regen = PLAYER.REGEN_PER_SEC;
+    fireTimer = 0;
+    invincible = 0;
+    shield = 0;
+    boostTimer = 0;
+    boostMult = 1;
+    faceAngle = 0;
+    dead = false;
+
+    private _pos = new Vec3();
+
+    onLoad(): void {
+        this.expNext = this._expNeed(1);
+        this._initVisual();
+    }
+
+    /** 玩家视觉：Graphics 像素风小丑鱼（不依赖贴图资源，避免 bundle 缺失导致隐形） */
+    private _initVisual(): void {
+        const g = this.node.getComponent(Graphics) || this.node.addComponent(Graphics);
+        g.clear();
+        // 身体（橙色圆角矩形，面向右）
+        g.fillColor = new Color(255, 140, 40, 255);
+        g.roundRect(-16, -10, 32, 20, 8);
+        g.fill();
+        // 白色竖条纹
+        g.fillColor = new Color(255, 255, 255, 255);
+        g.rect(0, -9, 5, 18);
+        g.fill();
+        // 尾鳍（三角形）
+        g.fillColor = new Color(255, 100, 30, 255);
+        g.moveTo(-16, 0);
+        g.lineTo(-27, -9);
+        g.lineTo(-27, 9);
+        g.close();
+        g.fill();
+        // 背鳍
+        g.fillColor = new Color(255, 120, 35, 255);
+        g.moveTo(-4, -10);
+        g.lineTo(2, -16);
+        g.lineTo(8, -10);
+        g.close();
+        g.fill();
+        // 眼睛
+        g.fillColor = new Color(20, 20, 20, 255);
+        g.circle(8, 4, 3);
+        g.fill();
+    }
+
+    /** 重置玩家属性（新游戏时调用） */
+    reset(): void {
+        this.maxHp = PLAYER.MAX_HP;
+        this.hp = PLAYER.MAX_HP;
+        this.level = 1;
+        this.exp = 0;
+        this.expNext = this._expNeed(1);
+        this.speed = PLAYER.SPEED;
+        this.fireInterval = PLAYER.FIRE_INTERVAL;
+        this.bulletSpeed = PLAYER.BULLET_SPEED;
+        this.bulletCount = PLAYER.BULLET_COUNT;
+        this.bulletDamage = PLAYER.BULLET_DAMAGE;
+        this.bulletRange = PLAYER.BULLET_RANGE;
+        this.pierce = BULLET.PIERCE_DEFAULT;
+        this.pickupRange = PLAYER.PICKUP_RANGE;
+        this.regen = PLAYER.REGEN_PER_SEC;
+        this.fireTimer = 0;
+        this.invincible = 0;
+        this.shield = 0;
+        this.boostTimer = 0;
+        this.boostMult = 1;
+        this.faceAngle = 0;
+        this.dead = false;
+    }
+
+    /** 放置玩家到起始位置 */
+    placeAtStart(): void {
+        this.node.setPosition(PLAYER.START_X, PLAYER.START_Y, 0);
+    }
+
+    private _expNeed(level: number): number {
+        return 8 + level * 4;
+    }
+
+    update(dt: number): void {
+        if (this.dead) return;
+        // 仅 PLAYING 状态运行（引擎自动调用本方法，需自行判断状态）
+        if (this.gameManager?.state !== GameState.PLAYING) return;
+        this._updateMove(dt);
+        this._updateTimers(dt);
+        this._updateRegen(dt);
+        this._updateFire(dt);
+    }
+
+    // ===== 移动 =====
+    private _updateMove(dt: number): void {
+        if (!this.joystick) return;
+        const ix = this.joystick.moveX, iy = this.joystick.moveY;
+        if (ix !== 0 || iy !== 0) {
+            const speed = this.speed * this.boostMult;
+            const pos = this.node.position;
+            const nx = pos.x + ix * speed * dt;
+            const ny = pos.y + iy * speed * dt;
+            const wm = this.worldManager!;
+            const resolved = wm.moveResolve(nx, ny, PLAYER.RADIUS);
+            const cx = clamp(resolved[0], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS);
+            const cy = clamp(resolved[1], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS);
+            this.node.setPosition(cx, cy, pos.z);
+            this.faceAngle = Math.atan2(iy, ix);
+            this.node.setRotationFromEuler(0, 0, -this.faceAngle * 180 / Math.PI);
+        }
+    }
+
+    // ===== 计时 =====
+    private _updateTimers(dt: number): void {
+        if (this.invincible > 0) this.invincible -= dt;
+        if (this.boostTimer > 0) {
+            this.boostTimer -= dt;
+            if (this.boostTimer <= 0) this.boostMult = 1;
+        }
+    }
+
+    // ===== 回血 =====
+    private _updateRegen(dt: number): void {
+        if (this.regen > 0 && this.hp < this.maxHp) {
+            this.hp = Math.min(this.maxHp, this.hp + this.regen * dt);
+        }
+    }
+
+    // ===== 自动攻击 =====
+    private _updateFire(dt: number): void {
+        this.fireTimer -= dt;
+        if (this.fireTimer <= 0) this._firePlayer();
+    }
+
+    private _firePlayer(): void {
+        let angle: number;
+        if (this.joystick && this.joystick.aimActive) {
+            angle = Math.atan2(this.joystick.aimY, this.joystick.aimX);
+            this.faceAngle = angle;
+        } else {
+            const target = this._findNearestEnemy(this.bulletRange * 1.2);
+            if (!target) return;
+            angle = Math.atan2(target.y - this.node.position.y, target.x - this.node.position.x);
+            this.faceAngle = angle;
+        }
+
+        const n = this.bulletCount;
+        const spread = (n - 1) * 0.12;
+        const base = angle - spread / 2;
+        const pos = this.node.position;
+
+        for (let i = 0; i < n; i++) {
+            const a = n === 1 ? angle : base + i * (spread / Math.max(1, n - 1));
+            this._spawnBullet(pos.x, pos.y, a);
+        }
+        this.fireTimer = this.fireInterval;
+        this.audioManager?.shoot();
+    }
+
+    private _spawnBullet(x: number, y: number, angle: number): void {
+        if (!this.bulletPrefab || !this.entityManager) return;
+        const bulletNode = instantiate(this.bulletPrefab);
+        this.entityManager.addChild(bulletNode);
+        bulletNode.setPosition(x, y, 0);
+        const bullet = bulletNode.getComponent(BulletComponent);
+        if (bullet) {
+            bullet.init(angle, this.bulletSpeed, this.bulletDamage, this.bulletRange, false, this.pierce);
+            bullet.owner = this;
+        }
+    }
+
+    /** 射程内最近敌人 */
+    private _findNearestEnemy(maxDist: number): { x: number; y: number } | null {
+        // 简化版：遍历 EntityManager 子节点找最近敌人
+        // 实际项目中应使用 WorldManager 的空间哈希
+        if (!this.entityManager) return null;
+        const pos = this.node.position;
+        let best: { x: number; y: number } | null = null;
+        let bestD2 = maxDist * maxDist;
+        const children = this.entityManager.children;
+        for (const child of children) {
+            if (!child.active) continue;
+            const enemyAI = child.getComponent('EnemyAI') || child.getComponent('EliteAI');
+            if (!enemyAI) continue;
+            const cpos = child.position;
+            const d2 = (cpos.x - pos.x) ** 2 + (cpos.y - pos.y) ** 2;
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = { x: cpos.x, y: cpos.y };
+            }
+        }
+        return best;
+    }
+
+    // ===== 受击 =====
+    damagePlayer(amount: number, srcX: number, srcY: number): void {
+        if (this.dead || this.invincible > 0) return;
+
+        if (this.shield > 0) {
+            this.shield--;
+            this.invincible = 0.35;
+            this.audioManager?.pickup();
+            this.gameManager?.notify('🛡 护盾抵挡了伤害！');
+            return;
+        }
+
+        this.hp -= amount;
+        this.invincible = PLAYER.INVINCIBLE_TIME;
+
+        // 击退
+        const a = Math.atan2(this.node.position.y - srcY, this.node.position.x - srcX);
+        const kx = Math.cos(a) * PLAYER.KNOCKBACK;
+        const ky = Math.sin(a) * PLAYER.KNOCKBACK;
+        const pos = this.node.position;
+        const nx = clamp(pos.x + kx * 0.08, PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS);
+        const ny = clamp(pos.y + ky * 0.08, PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS);
+        const resolved = this.worldManager!.moveResolve(nx, ny, PLAYER.RADIUS);
+        this.node.setPosition(resolved[0], resolved[1], pos.z);
+
+        this.audioManager?.hurt();
+
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.dead = true;
+            this.gameManager?.onPlayerDeath();
+        }
+    }
+
+    // ===== 经验 =====
+    addExp(amount: number): boolean {
+        if (this.dead) return false;
+        this.exp += amount;
+        let leveled = false;
+        while (this.exp >= this.expNext) {
+            this.exp -= this.expNext;
+            this.level++;
+            this.expNext = this._expNeed(this.level);
+            this.hp = Math.min(this.maxHp, this.hp + 10);
+            leveled = true;
+        }
+        if (leveled) {
+            this.audioManager?.levelup();
+            this.gameManager?.onLevelUp();
+        }
+        return leveled;
+    }
+
+    // ===== 拾取效果 =====
+    applyPickup(type: string): void {
+        if (type === 'range') {
+            this.bulletRange *= (1 + PICKUP.RANGE_BONUS);
+            this.pickupRange *= (1 + PICKUP.RANGE_BONUS);
+        } else if (type === 'boost') {
+            this.boostMult = 1 + PICKUP.BOOST_SPEED_BONUS;
+            this.boostTimer = PICKUP.BOOST_DURATION;
+        } else if (type === 'hp') {
+            this.hp = Math.min(this.maxHp, this.hp + PICKUP.HP_AMOUNT);
+        } else if (type === 'hpBig') {
+            this.hp = Math.min(this.maxHp, this.hp + PICKUP.HP_BIG_AMOUNT);
+        } else if (type === 'shield') {
+            this.shield = Math.min(PICKUP.SHIELD_MAX, this.shield + 1);
+        }
+    }
+
+    /** 应用升级选项 */
+    applyUpgrade(choice: UpgradeChoice): void {
+        switch (choice.id) {
+            case 'bulletCount': this.bulletCount++; break;
+            case 'bulletDamage': this.bulletDamage += 5; break;
+            case 'bulletSpeed': this.bulletSpeed += 40; break;
+            case 'fireRate': this.fireInterval *= 0.85; break;
+            case 'maxHp': this.maxHp += 20; this.hp += 20; break;
+            case 'speed': this.speed += 20; break;
+            case 'bulletRange': this.bulletRange += 60; break;
+            case 'regen': this.regen += 0.5; break;
+            case 'pierce': this.pierce++; break;
+            case 'pickupRange': this.pickupRange += 30; break;
+        }
+    }
+}
+
+/** Bullet 组件（放在 Bullet.ts 文件中，这里引用） */
+// 实际 Bullet 组件在 Bullet.ts 中定义，此处仅声明类型
+import { Bullet as BulletComponent } from './Bullet';

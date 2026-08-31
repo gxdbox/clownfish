@@ -264,8 +264,9 @@ export class EliteAI extends Component {
 
     /** 精英身体视觉兜底（无 Sprite 素材时用 Graphics 绘制，激光用自身 Graphics 不受影响） */
     private _ensureVisual(): void {
-        // 预制体已带 Sprite 素材则跳过（不覆盖美术）
-        if (this.node.getComponent(Sprite)) return;
+        // Sprite 可能被 Cocos treeshake 成 undefined，需安全检查
+        const SpriteCtor = Sprite;
+        if (!SpriteCtor || this.node.getComponent(Sprite)) return;
         let body = this.node.getChildByName('Body');
         if (!body) {
             body = new Node('Body');

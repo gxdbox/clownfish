@@ -36,6 +36,9 @@ export class Pickup extends Component {
 
     /** 根据类型切换 SpriteFrame；无 Sprite 组件时用 Graphics 兜底绘制 */
     private _updateSprite(): void {
+        // Sprite 可能被 Cocos treeshake 成 undefined（如果场景没引用 cc.Sprite 序列化），需安全检查
+        const SpriteCtor = Sprite;
+        if (!SpriteCtor) { this._drawGfx(); return; }
         const sprite = this.node.getComponent(Sprite);
         const frameMap: Record<string, string> = {
             gem: 'sprites/gem',

@@ -96,6 +96,8 @@ export class PlayerController extends Component {
         g.fillColor = new Color(20, 20, 20, 255);
         g.circle(8, 4, 3);
         g.fill();
+        // 强制刷新 Graphics（web-mobile 环境需要）
+        try { g.flush && g.flush(); } catch {}
     }
 
     /** 重置玩家属性（新游戏时调用） */

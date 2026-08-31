@@ -327,6 +327,8 @@ export class WorldManager extends Component {
             g.fill();
         }
         g.stroke();
+        // 强制刷新 Graphics 命令缓冲区（web-mobile 环境需要显式 flush，否则渲染可能延迟或丢失）
+        try { g.flush && g.flush(); } catch {}
     }
 
     // ===== 空间哈希 =====

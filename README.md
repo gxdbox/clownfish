@@ -110,7 +110,7 @@ cocos-scripts/
   managers/
     GameManager.ts           状态机 + 主循环 + 全局协调
     SpawnManager.ts          波次生成 + 难度曲线 + 掉落
-    AudioManager.ts          13 个音效（AudioClip → audioEngine）
+    AudioManager.ts          14 个 AudioClip（12 音效 + click + BGM，自动加载）
     WorldManager.ts          地形生成 + Int32Array 空间哈希 + 碰撞
   components/
     PlayerController.ts      玩家行为（移动/攻击/受击/护盾/升级）
@@ -130,6 +130,27 @@ cocos-scripts/
 
 ### 编辑器搭建指南
 
+#### 方案 A：最小场景（推荐，5 分钟搞定）
+
+**运行时自举**：`GameManager` 会自动创建所有缺失节点/组件，场景只需 3 个元素：
+
+```
+Main Camera（默认即可，代码自动挂 CameraFollow）
+Canvas
+任意空节点 → 挂 GameManager.ts（建议命名 Managers，挂在场景根）
+```
+
+启动后代码会自动：
+- 创建 WorldNode（地形，场景根）/ EntityManager / Player（世界层）
+- 创建 UIRoot + HUD / MenuPanel / LevelUpPanel / PausePanel / GameOverPanel / NotifyToast（UIRoot 下）
+- 创建 JoystickNode（Canvas 下最顶层）
+- 挂载 WorldManager / SpawnManager / AudioManager / CameraFollow
+- 无预制体时自动用 Graphics 绘制敌人/子弹/拾取物/玩家（零素材可玩，有素材自动用素材）
+
+> 若场景已按方案 B 搭好，自举逻辑会复用已有节点并自动修正错层级（世界节点不在 Canvas 下）。
+
+#### 方案 B：完整手动搭建（可选）
+
 #### 场景节点树
 
 ```
@@ -148,7 +169,9 @@ Canvas
 └── Managers           ← GameManager/SpawnManager/AudioManager/CameraFollow
 ```
 
-#### 预制体（Prefab）
+#### 预制体（Prefab，可选）
+
+> 不搭预制体也能玩（运行时自动生成 Graphics 视觉）；以下为使用美术素材时的配置。
 
 ```
 assets/prefabs/Player.prefab       → PlayerController
@@ -164,16 +187,51 @@ assets/prefabs/Pickup.prefab       → Pickup
 ```
 assets/resources/sprites/gem.png, bigGem.png, hpPickup.png,
   hpBigPickup.png, shieldPickup.png, rangePickup.png, boostPickup.png
-assets/resources/audio/shoot.ogg, hit.ogg, kill.ogg, hurt.ogg,
-  pickup.ogg, levelup.ogg, explosion.ogg, laser.ogg, laser_warn.ogg,
-  burst.ogg, gameover.ogg, spike_hit.ogg（共 13 个）
+assets/resources/audio/shoot.m4a, hit.m4a, kill.m4a, hurt.m4a,
+  pickup.m4a, levelup.m4a, explosion.m4a, laser.m4a, laser_warn.m4a,
+  burst.m4a, gameover.m4a, spike_hit.m4a, click.m4a, bgm.m4a
 ```
 
-### 微信小游戏发布步骤
+#### 音频素材（2026-08 已生成，共 14 个）
+
+音频全部**程序化合成**（`tools/generate_audio.py`，纯 Python 标准库可复现），贴合海底主题：
+
+| 文件 | 用途 | 风格 |
+|---|---|---|
+| `shoot.m4a` | 玩家射击 | 水泡喷射，鱼儿吐泡感 |
+| `hit.m4a` / `kill.m4a` | 命中 / 击杀 | 水下闷响 / 气泡爆裂 |
+| `hurt.m4a` / `spike_hit.m4a` | 受伤 / 尖刺扎到 | 低沉下滑 / 高频短刺 |
+| `pickup.m4a` / `levelup.m4a` | 拾取 / 升级 | 水晶叮咚 / 上行琶音 |
+| `explosion.m4a` / `burst.m4a` | 精英爆炸 / 死亡爆发 | 低频轰鸣 / 连环连爆 |
+| `laser.m4a` / `laser_warn.m4a` | 激光发射 / 预警 | 放电扫频 / 三连警报 |
+| `click.m4a` | UI 按钮点击 | 短促水泡弹 |
+| `bgm.m4a` | 背景音乐 | 16s 无缝循环海底氛围（A 调五声 pad + 气泡 + 旋律） |
+
+**接入方式（两种任选，推荐自动加载）**：
+1. **自动加载（推荐）**：把整个 `assets/resources/audio/` 拷入 Cocos 工程 `assets/resources/audio/`，代码在 `onLoad` 自动 `resources.load`，无需拖拽；自动加载失败无影响（有 `@property` 可选拖入优先）。
+2. **编辑器拖入**：把 m4a 拖到 AudioManager 组件对应属性（`shootClip` 等 12 个音效 + `bgmClip`）。
+
+> 已修复：命中/击杀音效此前定义了但**从未触发**（Bullet 命中静音），现已在弹道命中处接入；UI 按钮补充点击音效；BGM 此前仅 WebAudio 合成（微信小游戏无 WebAudio 会静音），现在有素材循环播放，无素材时仍回退合成。
+
+#### 已修复问题（2026-08 全流程测试）
+
+| 问题现象 | 根因 | 修复 |
+|---|---|---|
+| 升级后找不到奖励弹框，游戏卡死 | LevelUpUI 依赖 onLoad 时机，面板默认隐藏时卡牌为空白 / 场景缺 LevelUpPanel 节点 / 弹框被搭在世界层 | LevelUpUI 改懒构建（_ensureBuilt）；GameManager 全量自举缺失节点组件并强制面板归位 UIRoot；升级面板异常时自动选第一项防卡死 |
+| 精英死亡爆发子弹静止不动 | Bullet 用 `owner?.gameManager` 判状态，敌弹 owner 为 null 恒被冻结 | 敌弹改为显式注入 gameManager/targetPlayer/worldManager |
+| 精英死亡无爆发弹幕、敌弹命中无伤害 | 爆发未实现；命中仅 emit 无人监听事件 | 实现 24 发圆爆发 + 直接伤害玩家的 damagePlayer |
+| 无预制体时敌人/子弹/拾取物全部缺失（空游戏） | prefab 缺失直接 return | 全部改为 `getComponent ?? addComponent` 自举 + Graphics 视觉（零素材可玩） |
+| 世界节点（WorldNode/EntityManager/Player）在 Canvas 下时相机跟随失效、坐标错乱 | 2D 世界节点误放 UI 层 | 自举检测并自动移到场景根 |
+| 拾取物/敌人无素材时隐形 | resources.load 失败无兜底 | Graphics 按类型绘制彩色视觉 |
+| 顶部提示（NotifyToast）永远不显示 | 面板默认隐藏时 onLoad 未执行 | 同 LevelUpUI 改懒构建 |
+
+---
+
+## 微信小游戏发布步骤
 
 1. Cocos Creator 构建面板 → 发布平台选「微信小游戏」
 2. 纹理批量设置 Filter Mode = **Point**（像素风防模糊）
-3. 音效用 `.ogg` 格式，PNG 用 TinyPNG 压缩
+3. 音频推荐 `.m4a`（AAC 96kbps，微信小游戏原生支持；仓库已备好 14 个）
 4. 主包 4MB 限制：大素材放 `subpackages/` 分包
 5. 构建 → 输出到 `build/wechatgame/`
 6. 微信开发者工具导入 `build/wechatgame/` → 真机预览

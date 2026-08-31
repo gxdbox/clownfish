@@ -2,14 +2,17 @@
  * EliteAI.ts — 精英敌人行为（激光三态状态机 + 死亡爆发）
  * 挂在 Elite 预制体上。
  * 状态：idle（追踪）→ windup（预警1s）→ firing（光束0.8s）→ idle
+ * 死亡：圆形爆发 24 发敌弹 + 必掉大血球（掉落由 SpawnManager 处理）
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Node, Graphics, Color } from 'cc';
+import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
 import { ELITE, WORLD, GameState } from '../config';
+import { ensureRenderTransform } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
 import type { PlayerController } from './PlayerController';
+import { Bullet } from './Bullet';
 const { ccclass, property } = _decorator;
 
 type LaserState = 'idle' | 'windup' | 'firing';
@@ -70,6 +73,7 @@ export class EliteAI extends Component {
 
         this.node.setPosition(x, y, 0);
         this.node.active = true;
+        this._ensureVisual();
     }
 
     update(dt: number): void {
@@ -220,7 +224,67 @@ export class EliteAI extends Component {
         if (!this._active) return;
         this._active = false;
         this.node.active = false;
+        // 死亡爆发：向四周喷射 BURST_COUNT 发敌弹（README 规格）
+        this._burstBullets();
         this.gameManager?.onEliteKilled(this);
+    }
+
+    /**
+     * 精英死亡爆发：N 发敌弹向全方向扩散。
+     * 子弹零素材可用：无预制体时动态创建节点 + Graphics 红色弹丸视觉。
+     */
+    private _burstBullets(): void {
+        if (!this.entityManager) return;
+        const pos = this.node.position;
+        const EL = ELITE;
+        const bulletDamage = Math.max(6, Math.round(EL.CONTACT_DAMAGE * 0.45));
+        for (let i = 0; i < EL.BURST_COUNT; i++) {
+            const a = (i / EL.BURST_COUNT) * Math.PI * 2;
+            const bn = new Node('EliteBullet');
+            this.entityManager.addChild(bn);
+            bn.setPosition(pos.x, pos.y, 0);
+            // 兜底视觉：红色圆弹丸（无 Bullet 预制体/素材时保证可见）
+            ensureRenderTransform(bn, 20, 20);
+            const g = bn.addComponent(Graphics);
+            g.fillColor = new Color(255, 80, 80, 255);
+            g.circle(0, 0, 9);
+            g.fill();
+            g.fillColor = new Color(255, 210, 210, 255);
+            g.circle(0, 0, 4);
+            g.fill();
+            const bullet = bn.addComponent(Bullet);
+            bullet.gameManager = this.gameManager;
+            bullet.targetPlayer = this.player;
+            bullet.worldManager = this.worldManager;
+            // 敌弹射程 620（略大于激光射程，避免弹幕瞬间穿透视野）
+            bullet.init(a, EL.BURST_SPEED, bulletDamage, 620, true, 0);
+        }
+        this.audioManager?.burst();
+    }
+
+    /** 精英身体视觉兜底（无 Sprite 素材时用 Graphics 绘制，激光用自身 Graphics 不受影响） */
+    private _ensureVisual(): void {
+        // 预制体已带 Sprite 素材则跳过（不覆盖美术）
+        if (this.node.getComponent(Sprite)) return;
+        let body = this.node.getChildByName('Body');
+        if (!body) {
+            body = new Node('Body');
+            body.setPosition(0, 0, 0);
+            this.node.addChild(body);
+        }
+        const g = body.getComponent(Graphics) || body.addComponent(Graphics);
+        g.clear();
+        ensureRenderTransform(body, ELITE.RADIUS * 2 + 8, ELITE.RADIUS * 2 + 8);
+        // 紫色大圆 + 白色核心（区别于普通敌人）
+        g.fillColor = new Color(150, 90, 220, 255);
+        g.circle(0, 0, ELITE.RADIUS);
+        g.fill();
+        g.fillColor = new Color(220, 180, 255, 255);
+        g.circle(-4, -4, ELITE.RADIUS * 0.3);
+        g.fill();
+        g.fillColor = new Color(255, 80, 120, 255);
+        g.circle(4, 4, ELITE.RADIUS * 0.24);
+        g.fill();
     }
 
     recycle(): void {

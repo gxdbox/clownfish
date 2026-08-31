@@ -8,7 +8,6 @@ import { Color, Graphics, Label, Node, UITransform } from 'cc';
 export function clamp(v: number, min: number, max: number): number {
     return v < min ? min : (v > max ? max : v);
 }
-
 /** 线性插值 */
 export function lerp(a: number, b: number, t: number): number {
     return a + (b - a) * t;
@@ -86,6 +85,15 @@ export function easeOutBack(t: number): number {
     const c1 = 1.70158;
     const c3 = c1 + 1;
     return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+/** 为节点补齐 UITransform（Graphics/Sprite 渲染的尺寸基准，锚点居中）。
+ *  世界层节点挂 Graphics 时部分平台要求 UITransform 存在，否则视觉不渲染。 */
+export function ensureRenderTransform(node: Node, w = 64, h = 64): UITransform {
+    const t = node.getComponent(UITransform) || node.addComponent(UITransform);
+    t.setAnchorPoint(0.5, 0.5);
+    if (t.contentSize.width <= 0) t.setContentSize(w, h);
+    return t;
 }
 
 // ===== 动态 UI 创建工具（纯代码 UI，不依赖场景节点与贴图） =====

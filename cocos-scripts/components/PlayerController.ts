@@ -4,7 +4,7 @@
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3 } from 'cc';
-import { clamp } from '../util';
+import { clamp, ensureRenderTransform } from '../util';
 import { PLAYER, BULLET, PICKUP, WORLD, GameState } from '../config';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -67,6 +67,7 @@ export class PlayerController extends Component {
 
     /** 玩家视觉：Graphics 像素风小丑鱼（不依赖贴图资源，避免 bundle 缺失导致隐形） */
     private _initVisual(): void {
+        ensureRenderTransform(this.node, 64, 64);
         const g = this.node.getComponent(Graphics) || this.node.addComponent(Graphics);
         g.clear();
         // 身体（橙色圆角矩形，面向右）
@@ -208,11 +209,26 @@ export class PlayerController extends Component {
     }
 
     private _spawnBullet(x: number, y: number, angle: number): void {
-        if (!this.bulletPrefab || !this.entityManager) return;
-        const bulletNode = instantiate(this.bulletPrefab);
+        if (!this.entityManager) return;
+        let bulletNode: Node;
+        if (this.bulletPrefab) {
+            bulletNode = instantiate(this.bulletPrefab);
+        } else {
+            // 无 Bullet 预制体时自举：动态创建节点 + Graphics 视觉（黄色小圆，带白色高光）
+            bulletNode = new Node('Bullet');
+            ensureRenderTransform(bulletNode, 20, 20);
+            const g = bulletNode.addComponent(Graphics);
+            g.fillColor = new Color(255, 225, 90, 255);
+            g.circle(0, 0, 5);
+            g.fill();
+            g.fillColor = new Color(255, 255, 255, 255);
+            g.circle(-1, -1, 2);
+            g.fill();
+        }
         this.entityManager.addChild(bulletNode);
         bulletNode.setPosition(x, y, 0);
-        const bullet = bulletNode.getComponent(BulletComponent);
+        // 自举节点无 Bullet 组件时补挂（预制体路径 getComponent 正常返回）
+        const bullet = bulletNode.getComponent(BulletComponent) ?? bulletNode.addComponent(BulletComponent);
         if (bullet) {
             bullet.init(angle, this.bulletSpeed, this.bulletDamage, this.bulletRange, false, this.pierce);
             bullet.owner = this;

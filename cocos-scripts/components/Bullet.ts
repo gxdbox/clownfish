@@ -2,10 +2,17 @@
  * Bullet.ts — 子弹行为（飞行 + 命中检测 + 穿透）
  * 挂在 Bullet 预制体上。
  * Cocos Creator 3.8.8 迁移版
+ *
+ * 修复：敌弹（hostile，由精英爆发生成）owner 为 null，
+ * 原版用可选链 owner?.gameManager?.state 判断状态，
+ * 可选链结果恒不等于 PLAYING → 敌弹永不移动。
+ * 现改为显式注入 gameManager/targetPlayer/worldManager 引用。
  */
 import { _decorator, Component, Node } from 'cc';
 import { WORLD, BULLET, GameState } from '../config';
 import type { PlayerController } from './PlayerController';
+import type { WorldManager } from '../managers/WorldManager';
+import type { GameManager } from '../managers/GameManager';
 const { ccclass, property } = _decorator;
 
 @ccclass('Bullet')
@@ -13,6 +20,12 @@ export class Bullet extends Component {
 
     /** 子弹所有者（玩家），用于区分敌我 */
     owner: PlayerController | null = null;
+    /** 状态机引用（敌弹由 EliteAI 注入；玩家子弹经 owner 链获取） */
+    gameManager: GameManager | null = null;
+    /** 敌方子弹目标（由 EliteAI 注入） */
+    targetPlayer: PlayerController | null = null;
+    /** 世界管理器（敌弹撞墙检测，由 EliteAI 注入） */
+    worldManager: WorldManager | null = null;
 
     private _vx = 0;
     private _vy = 0;
@@ -38,13 +51,23 @@ export class Bullet extends Component {
 
     update(dt: number): void {
         if (!this._active) return;
-        // 暂停时冻结（引擎自动调用本方法，需自行判断状态）
-        if (this.owner?.gameManager?.state !== GameState.PLAYING) return;
+        // 暂停时冻结：敌弹 owner 为 null，不能走 owner?.gameManager 链（可选链判空 bug 修复）
+        if (this._hostile) {
+            if (!this.gameManager || this.gameManager.state !== GameState.PLAYING) return;
+        } else if (this.owner?.gameManager?.state !== GameState.PLAYING) {
+            return;
+        }
 
         const pos = this.node.position;
         const nx = pos.x + this._vx * dt;
         const ny = pos.y + this._vy * dt;
         this._traveled += Math.sqrt(this._vx * this._vx + this._vy * this._vy) * dt;
+
+        // 敌弹撞墙立即消失（玩家子弹保持穿墙，与原始版本一致）
+        if (this._hostile && this.worldManager && this.worldManager.collideWalls(nx, ny, BULLET.RADIUS, false)) {
+            this._deactivate();
+            return;
+        }
 
         // 生命周期终止
         if (this._traveled >= this._range ||
@@ -85,8 +108,15 @@ export class Bullet extends Component {
             if (d2 < hitRadius * hitRadius) {
                 // 命中
                 const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI');
+                let killed = false;
                 if (enemyComp && 'hurtEnemy' in enemyComp) {
                     (enemyComp as any).hurtEnemy(this._damage, pos.x, pos.y);
+                    killed = (enemyComp as any).hp <= 0;
+                }
+                // 命中/击杀音效（穿透多段命中时由 AudioManager 节流）
+                if (this.owner) {
+                    if (killed) this.owner.audioManager?.kill();
+                    else this.owner.audioManager?.hit();
                 }
 
                 if (this._pierce > 0) {
@@ -99,15 +129,13 @@ export class Bullet extends Component {
         }
     }
 
-    /** 敌方子弹命中玩家 */
+    /** 敌方子弹命中玩家（直接伤害，原版仅 emit 无人监听的事件，修复为真实伤害） */
     private _checkHitPlayer(): void {
-        // 由 GameManager 或 PlayerController 统一处理
-        // 这里通过事件通知
-        this.node.emit('bullet-hit-player', {
-            damage: this._damage,
-            x: this.node.position.x,
-            y: this.node.position.y
-        });
+        const player = this.targetPlayer;
+        const pos = this.node.position;
+        if (player && !player.dead && player.gameManager?.state === GameState.PLAYING) {
+            player.damagePlayer(this._damage, pos.x, pos.y);
+        }
         this._deactivate();
     }
 

@@ -30,11 +30,13 @@ export class MenuUI extends Component {
 
         const start = createButton(this.node, '▶ 点击开始', 0, -20, () => {
             this.audioManager?.unlock();
+            this.audioManager?.click();
             this.gameManager?.startGame();
         }, 300, 68);
         this.startButton = start.node;
 
         const mute = createButton(this.node, '🔊 音效开', 0, -112, () => {
+            this.audioManager?.click();
             this.audioManager?.toggleMute();
             this._updateMuteLabel();
         }, 220, 54);

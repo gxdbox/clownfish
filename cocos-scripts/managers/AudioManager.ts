@@ -1,16 +1,36 @@
 /**
- * AudioManager.ts — 音效管理 + 程序化背景音乐
- * 12 个 AudioClip 通过编辑器拖入，运行时用 AudioSource 组件播放。
- * 背景音乐：WebAudio 程序化合成海底氛围（低频 pad + 气泡 + 旋律），无需音频资源。
+ * AudioManager.ts — 音效管理 + 背景音乐
+ * 14 个 AudioClip：12 个音效 + click + 1 个 BGM，两种接入方式（任选其一）：
+ *   1. 编辑器属性拖入（优先）；
+ *   2. 自动加载：素材放入 assets/resources/audio/ 下同名文件（shoot.m4a 等），代码自动加载。
+ * 背景音乐：有 bgmClip 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
  * 微信小游戏：AudioSource 自动适配 wx.createInnerAudioContext。
  */
-import { _decorator, Component, AudioClip, AudioSource } from 'cc';
+import { _decorator, Component, AudioClip, AudioSource, Node, resources } from 'cc';
 const { ccclass, property } = _decorator;
 
 /** 浏览器 WebAudio 类型（Cocos 工程 lib 可能不含 DOM 类型，统一用 any 兼容） */
 type AnyAudioCtx = any;
 type AnyGainNode = any;
 type AnyOscNode = any;
+
+/** 自动加载表：属性名 → assets/resources/audio/ 下的文件名（编辑器拖入过的属性跳过） */
+const CLIP_SOURCES: Array<[string, string]> = [
+    ['shootClip', 'shoot'],
+    ['hitClip', 'hit'],
+    ['killClip', 'kill'],
+    ['hurtClip', 'hurt'],
+    ['pickupClip', 'pickup'],
+    ['levelupClip', 'levelup'],
+    ['explosionClip', 'explosion'],
+    ['laserClip', 'laser'],
+    ['laserWarnClip', 'laser_warn'],
+    ['burstClip', 'burst'],
+    ['gameoverClip', 'gameover'],
+    ['spikeHitClip', 'spike_hit'],
+    ['clickClip', 'click'],
+    ['bgmClip', 'bgm'],
+];
 
 @ccclass('AudioManager')
 export class AudioManager extends Component {
@@ -27,11 +47,15 @@ export class AudioManager extends Component {
     @property(AudioClip) burstClip: AudioClip | null = null;
     @property(AudioClip) gameoverClip: AudioClip | null = null;
     @property(AudioClip) spikeHitClip: AudioClip | null = null;
+    @property(AudioClip) clickClip: AudioClip | null = null;
+    @property(AudioClip) bgmClip: AudioClip | null = null;
 
-    private _source: AudioSource | null = null;
+    private _source: AudioSource | null = null;      // 音效播放器
+    private _bgmSource: AudioSource | null = null;   // BGM 播放器（独立子节点，循环）
     private _muted = false;
+    private _lastPlay: Record<string, number> = {};  // 音效节流时间戳（防连击爆音）
 
-    // ===== 程序化 BGM（WebAudio 合成，无需音频资源） =====
+    // ===== 程序化 BGM 回退（WebAudio 合成，仅无 bgm 素材时启用） =====
     private _bgmCtx: AnyAudioCtx | null = null;
     private _bgmGain: AnyGainNode | null = null;
     private _bgmStarted = false;
@@ -42,6 +66,26 @@ export class AudioManager extends Component {
     onLoad(): void {
         // Cocos 3.8 已移除全局 audioEngine，统一用 AudioSource 组件播放音效
         this._source = this.node.getComponent(AudioSource) || this.node.addComponent(AudioSource);
+        // BGM 专用 AudioSource（独立子节点，避免与音效 one-shot 相互干扰）
+        let bgmNode = this.node.getChildByName('BGMAudio');
+        if (!bgmNode) {
+            bgmNode = new Node('BGMAudio');
+            this.node.addChild(bgmNode);
+        }
+        this._bgmSource = bgmNode.getComponent(AudioSource) || bgmNode.addComponent(AudioSource);
+        this._bgmSource.loop = true;
+        // 自动加载素材（assets/resources/audio/ 同名文件，编辑器拖入过的属性优先跳过）
+        for (const [key, name] of CLIP_SOURCES) {
+            if ((this as any)[key]) continue;
+            resources.load(`audio/${name}`, AudioClip, (err, clip) => {
+                if (err || !clip) return;
+                (this as any)[key] = clip;
+                // BGM 素材晚到时补播（玩家已解锁过音频）
+                if (key === 'bgmClip' && this._bgmStarted && this._bgmSource && !this._bgmSource.playing) {
+                    this._playBgmClip();
+                }
+            });
+        }
     }
 
     /** 首次用户交互时解锁音频（微信小游戏需要），并启动背景音乐 */
@@ -51,18 +95,25 @@ export class AudioManager extends Component {
 
     toggleMute(): boolean {
         this._muted = !this._muted;
+        if (this._bgmSource) {
+            this._bgmSource.volume = this._muted ? 0 : 0.5;
+        }
         if (this._bgmGain && this._bgmCtx) {
             this._bgmGain.gain.setTargetAtTime(this._muted ? 0 : this.BGM_VOLUME, this._bgmCtx.currentTime, 0.3);
         }
         return this._muted;
     }
 
-    // ===== 背景音乐：海底氛围合成 =====
+    // ===== 背景音乐 =====
 
-    /** 启动 BGM（首次用户手势时调用，满足浏览器 AudioContext 自动播放策略） */
+    /** 启动 BGM：优先素材循环播放，无素材时 WebAudio 合成（首次用户手势时调用） */
     startBgm(): void {
         if (this._bgmStarted) return;
         this._bgmStarted = true;
+        if (this.bgmClip) {
+            this._playBgmClip();
+            return;
+        }
         try {
             this._buildBgm();
             if (this._bgmCtx && this._bgmCtx.state === 'suspended') this._bgmCtx.resume();
@@ -71,9 +122,16 @@ export class AudioManager extends Component {
         }
     }
 
+    private _playBgmClip(): void {
+        if (!this._bgmSource || !this.bgmClip) return;
+        this._bgmSource.clip = this.bgmClip;
+        this._bgmSource.volume = this._muted ? 0 : 0.5;
+        this._bgmSource.play();
+    }
+
     private _buildBgm(): void {
         const AC = (typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext)) || null;
-        if (!AC) return; // 微信小游戏等环境无 WebAudio：后续可接 wx.createWebAudioContext
+        if (!AC) return; // 微信小游戏等环境无 WebAudio：使用 bgmClip 素材或静音
         const ctx: AnyAudioCtx = new AC();
         this._bgmCtx = ctx;
 
@@ -160,22 +218,26 @@ export class AudioManager extends Component {
         loop();
     }
 
-    /** 播放音效（短路：静音或无 clip 时跳过） */
-    private play(clip: AudioClip | null): void {
+    /** 播放音效（短路：静音、无 clip、节流期内则跳过） */
+    private play(key: string, clip: AudioClip | null, gap = 0): void {
         if (this._muted || !clip || !this._source) return;
+        const now = Date.now();
+        if (gap > 0 && now - (this._lastPlay[key] || 0) < gap * 1000) return;
+        this._lastPlay[key] = now;
         this._source.playOneShot(clip, 0.45);
     }
 
-    shoot(): void { this.play(this.shootClip); }
-    hit(): void { this.play(this.hitClip); }
-    kill(): void { this.play(this.killClip); }
-    hurt(): void { this.play(this.hurtClip); }
-    pickup(): void { this.play(this.pickupClip); }
-    levelup(): void { this.play(this.levelupClip); }
-    explosion(): void { this.play(this.explosionClip); }
-    laser(): void { this.play(this.laserClip); }
-    laserWarn(): void { this.play(this.laserWarnClip); }
-    burst(): void { this.play(this.burstClip); }
-    gameover(): void { this.play(this.gameoverClip); }
-    spikeHit(): void { this.play(this.spikeHitClip); }
+    shoot(): void { this.play('shoot', this.shootClip, 0.05); }
+    hit(): void { this.play('hit', this.hitClip, 0.06); }
+    kill(): void { this.play('kill', this.killClip, 0.1); }
+    hurt(): void { this.play('hurt', this.hurtClip, 0.12); }
+    pickup(): void { this.play('pickup', this.pickupClip, 0.05); }
+    levelup(): void { this.play('levelup', this.levelupClip); }
+    explosion(): void { this.play('explosion', this.explosionClip); }
+    laser(): void { this.play('laser', this.laserClip); }
+    laserWarn(): void { this.play('laserWarn', this.laserWarnClip); }
+    burst(): void { this.play('burst', this.burstClip); }
+    gameover(): void { this.play('gameover', this.gameoverClip); }
+    spikeHit(): void { this.play('spikeHit', this.spikeHitClip, 0.12); }
+    click(): void { this.play('click', this.clickClip, 0.04); }
 }

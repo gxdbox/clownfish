@@ -4,6 +4,10 @@
  * 卡牌全部动态创建（不依赖场景节点，避免引用缺失导致空画面）。
  * 交互：点击卡牌（TOUCH_START 即选）或键盘 ←→/A D 切换、回车/空格确认、1/2/3 直选。
  * 弹入动画使用 tween + easeOutBack。
+ *
+ * 关键修复：UI 采用懒构建（_ensureBuilt），不依赖 onLoad 时机。
+ * 面板节点在场景中默认隐藏（active=false）时 onLoad 不会执行，
+ * 若等 _onShow 时才构建会导致弹框空白/找不到弹框 → 升级后卡死。
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Color, Graphics, Label, Node, UITransform, Widget, tween, Vec3 } from 'cc';
@@ -24,7 +28,27 @@ export class LevelUpUI extends Component {
     /** 键盘导航当前选中（-1 = 未选中） */
     private _selected = -1;
 
+    /** 懒构建标记：面板 onLoad 未执行时由 setup/_onShow 触发构建 */
+    private _built = false;
+
     onLoad(): void {
+        this._ensureBuilt();
+    }
+
+    /** 设置引用（由 GameManager 调用） */
+    setup(gm: GameManager): void {
+        this.gameManager = gm;
+        // 立即构建 UI：面板节点 inactive 时 onLoad 不会执行，
+        // 若不提前构建，首次触发升级时弹框为空白 → 玩家找不到弹框 → 卡死
+        this._ensureBuilt();
+        gm.node.on('show-levelup', this._onShow, this);
+    }
+
+    /** 懒构建：无论 onLoad 是否执行过，保证面板内容完整创建（幂等） */
+    private _ensureBuilt(): void {
+        if (this._built) return;
+        this._built = true;
+
         // 强制面板几何：锚点居中 + 铺满设计分辨率 1280x720。
         // 场景中 Widget/锚点配置可能漂移（锚点非中心时卡牌会挤到屏幕角落），运行时统一修正。
         const w = this.node.getComponent(Widget);
@@ -33,6 +57,10 @@ export class LevelUpUI extends Component {
         uit.setAnchorPoint(0.5, 0.5);
         uit.setContentSize(1280, 720);
         this.node.setPosition(0, 0, 0);
+
+        // 清空旧子节点（重进场景时避免重复构建）
+        this.node.removeAllChildren();
+        this.cardNodes = [];
 
         // 全屏半透明遮罩（突出升级卡牌，压暗游戏画面）
         createPanel(this.node, 0, 0, 1280, 720, new Color(8, 14, 30, 184), 0);
@@ -76,12 +104,6 @@ export class LevelUpUI extends Component {
         }
     }
 
-    /** 设置引用（由 GameManager 调用） */
-    setup(gm: GameManager): void {
-        this.gameManager = gm;
-        gm.node.on('show-levelup', this._onShow, this);
-    }
-
     /** 键盘导航：左右移动选中 */
     moveSel(delta: number): void {
         const n = this.cardNodes.length;
@@ -112,6 +134,9 @@ export class LevelUpUI extends Component {
     private _onShow(choices: UpgradeChoice[]): void {
         this._selected = -1;
 
+        // 兜底：确保面板内容已构建（首次触发升级前 setup 可能未执行完整）
+        this._ensureBuilt();
+
         // 填充卡牌内容
         for (let i = 0; i < this.cardNodes.length && i < choices.length; i++) {
             const card = this.cardNodes[i];
@@ -137,6 +162,7 @@ export class LevelUpUI extends Component {
     }
 
     private _onChoose(idx: number): void {
+        this.gameManager?.audioManager?.click();
         this.gameManager?.chooseUpgrade(idx);
     }
 }

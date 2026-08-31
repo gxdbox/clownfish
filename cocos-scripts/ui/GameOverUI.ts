@@ -40,6 +40,7 @@ export class GameOverUI extends Component {
         this.levelLabel = createLabel(this.node, '等级 Lv.1', 0, -45, 28);
 
         const retry = createButton(this.node, '🔄 再来一局', 0, -140, () => {
+            this.gameManager?.audioManager?.click();
             this.gameManager?.startGame();
         }, 300, 66);
         this.retryButton = retry.node;

@@ -3,8 +3,9 @@
  * 挂在 Enemy 预制体上。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Node } from 'cc';
+import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
 import { ENEMY, WORLD, GameState } from '../config';
+import { ensureRenderTransform } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -17,6 +18,14 @@ const TYPES = [
     { spd: 0.75, dmg: 1.2, r: 15 },
     { spd: 1.25, dmg: 0.85, r: 12 },
     { spd: 0.9, dmg: 1.1, r: 14 }
+];
+
+// 四种敌人兜底配色（无 Sprite 素材时的 Graphics 绘制，与 TYPES 一一对应）
+const TYPE_COLORS = [
+    new Color(120, 220, 130, 255),
+    new Color(225, 150, 90, 255),
+    new Color(160, 130, 235, 255),
+    new Color(235, 205, 95, 255)
 ];
 
 @ccclass('EnemyAI')
@@ -62,6 +71,33 @@ export class EnemyAI extends Component {
 
         this.node.setPosition(x, y, 0);
         this.node.active = true;
+        this._ensureVisual();
+    }
+
+    /** 敌人身体视觉兜底（无 Sprite 素材时用 Graphics 绘制，保证敌人可见可玩） */
+    private _ensureVisual(): void {
+        // 预制体已带 Sprite 素材则跳过（不覆盖美术）
+        if (this.node.getComponent(Sprite)) return;
+        let body = this.node.getChildByName('Body');
+        if (!body) {
+            body = new Node('Body');
+            body.setPosition(0, 0, 0);
+            this.node.addChild(body);
+        }
+        const g = body.getComponent(Graphics) || body.addComponent(Graphics);
+        g.clear();
+        const t = TYPES[this.type];
+        ensureRenderTransform(body, t.r * 2 + 4, t.r * 2 + 4);
+        // 身体圆 + 眼睛（朝右，随节点旋转）
+        g.fillColor = TYPE_COLORS[this.type % TYPE_COLORS.length];
+        g.circle(0, 0, t.r);
+        g.fill();
+        g.fillColor = new Color(255, 255, 255, 255);
+        g.circle(t.r * 0.28, t.r * 0.3, t.r * 0.22);
+        g.fill();
+        g.fillColor = new Color(20, 20, 20, 255);
+        g.circle(t.r * 0.4, t.r * 0.32, t.r * 0.11);
+        g.fill();
     }
 
     update(dt: number): void {

@@ -1,6 +1,7 @@
 /**
  * SpawnManager.ts — 波次生成器（普通敌人 + 精英调度 + 难度曲线）
  * 挂在场景管理节点上。
+ * 实体生成零素材可用：无预制体时动态创建节点 + 组件 + Graphics 视觉（见各组件 _ensureVisual）。
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Node, Prefab, instantiate, view } from 'cc';
@@ -115,14 +116,14 @@ export class SpawnManager extends Component {
 
     /** 生成一个普通敌人 */
     private _spawnNormal(): void {
-        if (!this.enemyPrefab || !this._entityManager || !this._player) return;
+        if (!this._entityManager || !this._player) return;
 
         const pos = this._getSpawnPos();
         const type = Math.floor(Math.random() * 4);
 
-        const node = instantiate(this.enemyPrefab);
+        const node = this._createEntityNode(this.enemyPrefab, 'Enemy');
         this._entityManager.addChild(node);
-        const ai = node.getComponent(EnemyAI);
+        const ai = node.getComponent(EnemyAI) ?? node.addComponent(EnemyAI);
         if (ai) {
             ai.worldManager = this.worldManager;
             ai.audioManager = this.audioManager;
@@ -134,14 +135,14 @@ export class SpawnManager extends Component {
 
     /** 生成一个精英敌人 */
     private _spawnElite(): void {
-        if (!this.elitePrefab || !this._entityManager || !this._player) return;
+        if (!this._entityManager || !this._player) return;
 
         const pos = this._getSpawnPos();
         this.eliteCount++;
 
-        const node = instantiate(this.elitePrefab);
+        const node = this._createEntityNode(this.elitePrefab, 'Elite');
         this._entityManager.addChild(node);
-        const ai = node.getComponent(EliteAI);
+        const ai = node.getComponent(EliteAI) ?? node.addComponent(EliteAI);
         if (ai) {
             ai.worldManager = this.worldManager;
             ai.audioManager = this.audioManager;
@@ -152,6 +153,14 @@ export class SpawnManager extends Component {
         }
 
         this.gameManager?.notify(' 精英敌人来袭！');
+    }
+
+    /** 实体节点创建：有预制体用预制体实例化，无预制体创建裸节点（组件与视觉由目标组件自举） */
+    private _createEntityNode(prefab: Prefab | null, name: string): Node {
+        if (prefab) return instantiate(prefab);
+        const n = new Node(name);
+        n.setPosition(0, 0, 0);
+        return n;
     }
 
     /** 获取屏幕边缘外的生成位置 */
@@ -237,10 +246,10 @@ export class SpawnManager extends Component {
 
     /** 生成一个拾取物 */
     private _spawnPickupAt(x: number, y: number, type: string, value: number): void {
-        if (!this.pickupPrefab || !this._entityManager || !this._player) return;
-        const node = instantiate(this.pickupPrefab);
+        if (!this._entityManager || !this._player) return;
+        const node = this._createEntityNode(this.pickupPrefab, 'Pickup');
         this._entityManager.addChild(node);
-        const pickup = node.getComponent(Pickup);
+        const pickup = node.getComponent(Pickup) ?? node.addComponent(Pickup);
         if (pickup) {
             pickup.player = this._player;
             pickup.init(type, x, y, value);

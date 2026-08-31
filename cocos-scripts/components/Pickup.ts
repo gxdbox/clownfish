@@ -1,10 +1,11 @@
 /**
  * Pickup.ts — 拾取物行为（磁吸飞行 + 拾取效果）
  * 挂在 Pickup 预制体上。
+ * 有 Sprite 素材用 resources.load 加载；无素材（自举节点）用 Graphics 兜底绘制，保证宝石可见。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Sprite, SpriteFrame, resources, Node } from 'cc';
-import { dist2, clamp } from '../util';
+import { _decorator, Component, Sprite, SpriteFrame, resources, Node, Graphics, Color } from 'cc';
+import { dist2, clamp, ensureRenderTransform } from '../util';
 import { PICKUP, DROP, WORLD, GameState } from '../config';
 import type { PlayerController } from './PlayerController';
 const { ccclass, property } = _decorator;
@@ -33,10 +34,9 @@ export class Pickup extends Component {
         this._updateSprite();
     }
 
-    /** 根据类型切换 SpriteFrame */
+    /** 根据类型切换 SpriteFrame；无 Sprite 组件时用 Graphics 兜底绘制 */
     private _updateSprite(): void {
         const sprite = this.node.getComponent(Sprite);
-        if (!sprite) return;
         const frameMap: Record<string, string> = {
             gem: 'sprites/gem',
             bigGem: 'sprites/bigGem',
@@ -46,11 +46,67 @@ export class Pickup extends Component {
             range: 'sprites/rangePickup',
             boost: 'sprites/boostPickup',
         };
-        const path = frameMap[this.type];
-        if (path) {
-            resources.load(path, SpriteFrame, (err, frame) => {
-                if (!err && sprite) sprite.spriteFrame = frame;
-            });
+        if (sprite) {
+            const path = frameMap[this.type];
+            if (path) {
+                resources.load(path, SpriteFrame, (err, frame) => {
+                    if (!err && sprite) sprite.spriteFrame = frame;
+                });
+            }
+            return;
+        }
+        this._drawGfx();
+    }
+
+    /** Graphics 兜底视觉：按类型绘制彩色圆（零素材时拾取物可见，支持拾取升级） */
+    private _drawGfx(): void {
+        let body = this.node.getChildByName('Body');
+        if (!body) {
+            body = new Node('Body');
+            body.setPosition(0, 0, 0);
+            this.node.addChild(body);
+        }
+        const g = body.getComponent(Graphics) || body.addComponent(Graphics);
+        g.clear();
+
+        const radiusMap: Record<string, number> = {
+            gem: PICKUP.GEM_RADIUS,
+            bigGem: PICKUP.BIG_GEM_RADIUS,
+            hp: PICKUP.HP_RADIUS,
+            hpBig: PICKUP.HP_BIG_RADIUS,
+            shield: PICKUP.SHIELD_RADIUS,
+            range: PICKUP.RANGE_RADIUS,
+            boost: PICKUP.BOOST_RADIUS,
+        };
+        const colorMap: Record<string, Color> = {
+            gem: new Color(80, 225, 255, 255),
+            bigGem: new Color(80, 225, 255, 255),
+            hp: new Color(255, 90, 90, 255),
+            hpBig: new Color(255, 90, 90, 255),
+            shield: new Color(90, 150, 255, 255),
+            range: new Color(200, 120, 255, 255),
+            boost: new Color(110, 255, 150, 255),
+        };
+        const r = radiusMap[this.type] ?? PICKUP.GEM_RADIUS;
+        const c = colorMap[this.type] ?? new Color(255, 255, 255, 255);
+        ensureRenderTransform(body, r * 2 + 6, r * 2 + 6);
+
+        // 外圈 + 内芯（菱形宝石感）
+        g.fillColor = c;
+        g.circle(0, 0, r);
+        g.fill();
+        if (this.type === 'gem' || this.type === 'bigGem') {
+            g.fillColor = new Color(255, 255, 255, 220);
+            g.moveTo(0, -r * 0.95);
+            g.lineTo(r * 0.6, 0);
+            g.lineTo(0, r * 0.95);
+            g.lineTo(-r * 0.6, 0);
+            g.close();
+            g.fill();
+        } else {
+            g.fillColor = new Color(255, 255, 255, 200);
+            g.circle(-r * 0.25, r * 0.25, r * 0.4);
+            g.fill();
         }
     }
 

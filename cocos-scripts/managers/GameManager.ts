@@ -3,10 +3,14 @@
  * 挂在场景 Managers 节点上。
  * 状态：MENU → PLAYING ⇄ LEVELUP/PAUSED → GAMEOVER
  * Cocos Creator 3.8.8 迁移版
+ *
+ * 场景搭建兜底：_ensureSceneStructure 自举缺失节点/组件，
+ * 仅需「Canvas + Main Camera + 本节点」即可运行，
+ * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
-import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER } from '../config';
-import { formatTime } from '../util';
+import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color } from 'cc';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD } from '../config';
+import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
 import { AudioManager } from './AudioManager';
@@ -58,6 +62,8 @@ export class GameManager extends Component {
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
         this._resolveNodeRefs();
+        // 场景结构自举：缺失节点/组件自动创建，错层级自动修正，最小场景即可运行
+        this._ensureSceneStructure();
         // 微信小游戏查询参数检测 debug 模式
         // 注意：编辑器预览环境的 sys 可能没有 getParameterByName，需安全调用
         try {
@@ -101,6 +107,152 @@ export class GameManager extends Component {
         this.pauseNode = this.pauseNode ?? c('UIRoot/PausePanel');
         this.gameOverNode = this.gameOverNode ?? c('UIRoot/GameOverPanel');
         if (!this.entityManager) console.warn('[Clownfish] 运行时未找到 Canvas/EntityManager 节点');
+    }
+
+    // ===== 场景结构自举（最小场景 = Canvas + Main Camera + 本节点） =====
+
+    /**
+     * 自举全部必要节点与组件：
+     * 1. 世界层节点（WorldNode/EntityManager/Player）若被搭在 Canvas（UI 层）下则移到场景根，避免相机跟随失效；
+     * 2. 全部 UI 面板/管理器/相机组件缺失时自动创建；
+     * 3. 这是「升级弹框找不到 → 升级后卡死」问题的根治：弹框再也不会因场景搭建不全而消失。
+     */
+    private _ensureSceneStructure(): void {
+        const scene = this.node.scene;
+        if (!scene) return;
+        const canvas = scene.getChildByName('Canvas') ?? find('Canvas') ?? undefined;
+
+        // UIRoot：UI 容器
+        let uiRoot = canvas ? (canvas.getChildByName('UIRoot') ?? null) : null;
+        if (!uiRoot && canvas) {
+            uiRoot = new Node('UIRoot');
+            this._initUINode(uiRoot);
+            canvas.addChild(uiRoot);
+        }
+
+        // 世界层节点：WorldNode / EntityManager（Canvas 下的世界节点移到场景根）
+        if (!this.worldNode) {
+            this.worldNode = new Node('WorldNode');
+            this._initWorldNode(this.worldNode);
+            scene.addChild(this.worldNode);
+        } else {
+            if (this.worldNode.parent === canvas) scene.addChild(this.worldNode);
+            this._initWorldNode(this.worldNode);
+        }
+        if (this.entityManager) {
+            if (this.entityManager.parent === canvas) scene.addChild(this.entityManager);
+            this._initWorldNode(this.entityManager);
+        }
+        if (!this.entityManager) {
+            this.entityManager = new Node('EntityManager');
+            this._initWorldNode(this.entityManager);
+            scene.addChild(this.entityManager);
+        }
+
+        // 玩家节点
+        if (!this.playerController) {
+            let pNode = scene.getChildByName('Player') ?? null;
+            if (!pNode) {
+                pNode = new Node('Player');
+                scene.addChild(pNode);
+            } else if (pNode.parent === canvas) {
+                scene.addChild(pNode);
+            }
+            this.playerController = pNode.getComponent(PlayerController) ?? pNode.addComponent(PlayerController);
+        }
+
+        // UI 面板（缺则创建，错层级则归位到 UIRoot）
+        this.hudNode = this._ensureUIPanel(uiRoot, this.hudNode, 'HUD', false);
+        this.menuNode = this._ensureUIPanel(uiRoot, this.menuNode, 'MenuPanel', true);
+        this.levelUpNode = this._ensureUIPanel(uiRoot, this.levelUpNode, 'LevelUpPanel', false);
+        this.pauseNode = this._ensureUIPanel(uiRoot, this.pauseNode, 'PausePanel', false);
+        this.gameOverNode = this._ensureUIPanel(uiRoot, this.gameOverNode, 'GameOverPanel', false);
+        let toastNode = this.notifyToast ? this.notifyToast.node : null;
+        if (!toastNode) toastNode = this._ensureUIPanel(uiRoot, null, 'NotifyToast', false);
+        else if (uiRoot && toastNode.parent !== uiRoot) uiRoot.addChild(toastNode);
+
+        // 暂停面板提示文字（动态创建，不依赖 onLoad）
+        if (this.pauseNode && this.pauseNode.children.length === 0) {
+            createLabel(this.pauseNode, '⏸ 已暂停', 0, 40, 44);
+            createLabel(this.pauseNode, '按 Esc / 回车键继续', 0, -20, 24, new Color(140, 170, 190, 255));
+        }
+
+        // UI 组件（缺则挂载；LevelUpUI/MenuUI 等均支持节点未激活时初始化）
+        this.hud = this.hudNode ? (this.hudNode.getComponent(HUD) ?? this.hudNode.addComponent(HUD)) : null;
+        this.menuUI = this.menuNode ? (this.menuNode.getComponent(MenuUI) ?? this.menuNode.addComponent(MenuUI)) : null;
+        this.levelUpUI = this.levelUpNode ? (this.levelUpNode.getComponent(LevelUpUI) ?? this.levelUpNode.addComponent(LevelUpUI)) : null;
+        this.gameOverUI = this.gameOverNode ? (this.gameOverNode.getComponent(GameOverUI) ?? this.gameOverNode.addComponent(GameOverUI)) : null;
+        this.notifyToast = toastNode ? (toastNode.getComponent(NotifyToast) ?? toastNode.addComponent(NotifyToast)) : null;
+
+        // 摇杆（UI 层最顶层；全局 input 监听，不参与 UI 触摸命中，不挡升级卡牌点击）
+        if (!this.joystick) {
+            let joyNode = canvas ? (canvas.getChildByName('JoystickNode') ?? null) : null;
+            if (!joyNode && canvas) {
+                joyNode = new Node('JoystickNode');
+                this._initUINode(joyNode);
+                canvas.addChild(joyNode);
+            }
+            if (joyNode) {
+                if (!joyNode.getComponent(UITransform)) this._initUINode(joyNode);
+                if (!joyNode.getComponent(Graphics)) joyNode.addComponent(Graphics);
+                joyNode.setSiblingIndex(Math.max(0, (joyNode.parent?.children.length ?? 1) - 1));
+                this.joystick = joyNode.getComponent(Joystick) ?? joyNode.addComponent(Joystick);
+                this.joystick.gameManager = this;
+            }
+        }
+
+        // 管理器组件：WorldManager 挂 WorldNode（世界层），SpawnManager/AudioManager 挂本节点
+        if (!this.worldManager && this.worldNode) {
+            this.worldManager = this.worldNode.getComponent(WorldManager) ?? this.worldNode.addComponent(WorldManager);
+        }
+        if (!this.spawnManager) {
+            this.spawnManager = this.node.getComponent(SpawnManager) ?? this.node.addComponent(SpawnManager);
+        }
+        if (!this.audioManager) {
+            this.audioManager = this.node.getComponent(AudioManager) ?? this.node.addComponent(AudioManager);
+        }
+
+        // 相机跟随（Main Camera 自动挂载）
+        if (!this.cameraFollow) {
+            const camNode = scene.getChildByName('Main Camera')
+                ?? scene.getChildByName('main camera')
+                ?? scene.getComponentInChildren(Camera)?.node ?? null;
+            if (camNode) {
+                this.cameraFollow = camNode.getComponent(CameraFollow) ?? camNode.addComponent(CameraFollow);
+            }
+        }
+    }
+
+    /** 确保 UI 面板节点存在且归属 UIRoot（缺则创建、错层级归位），返回面板节点 */
+    private _ensureUIPanel(uiRoot: Node | null, node: Node | null, name: string, active: boolean): Node | null {
+        let n = node ?? (uiRoot ? (uiRoot.getChildByName(name) ?? null) : null);
+        if (!n && uiRoot) {
+            n = new Node(name);
+            this._initUINode(n);
+            uiRoot.addChild(n);
+        }
+        if (n && uiRoot && n.parent !== uiRoot) uiRoot.addChild(n);
+        if (n) {
+            n.active = active;
+            if (!n.getComponent(UITransform)) this._initUINode(n);
+        }
+        return n;
+    }
+
+    /** 初始化 UI 节点几何：锚点居中 + 铺满设计分辨率 1280x720 */
+    private _initUINode(n: Node): void {
+        const t = n.getComponent(UITransform) || n.addComponent(UITransform);
+        t.setAnchorPoint(0.5, 0.5);
+        t.setContentSize(1280, 720);
+        n.setPosition(0, 0, 0);
+    }
+
+    /** 初始化世界层节点几何：锚点左下 + 世界尺寸 */
+    private _initWorldNode(n: Node): void {
+        n.setPosition(0, 0, 0);
+        const t = n.getComponent(UITransform) || n.addComponent(UITransform);
+        t.setAnchorPoint(0, 0);
+        t.setContentSize(WORLD.SIZE, WORLD.SIZE);
     }
 
     onDestroy(): void {
@@ -191,6 +343,12 @@ export class GameManager extends Component {
         if (this.state !== GameState.PLAYING) return;
         this.state = GameState.LEVELUP;
         this._levelUpChoices = this._pickChoices();
+        // 兜底：升级面板异常（场景搭建不全）时自动选择第一项，避免永远卡在升级状态
+        if (!this.levelUpNode || !this.levelUpUI) {
+            console.warn('[Clownfish] 升级面板不可用，自动选择第一个升级项');
+            this.chooseUpgrade(0);
+            return;
+        }
         this._showUI('levelup');
         // 通知 LevelUpUI 显示选项
         this.node.emit('show-levelup', this._levelUpChoices);

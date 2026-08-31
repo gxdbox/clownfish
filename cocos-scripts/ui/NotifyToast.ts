@@ -2,6 +2,8 @@
  * NotifyToast.ts — 顶部提示（精英来袭/拾取加成/波次提示）
  * 挂在 NotifyToast 节点上。
  * 文字与背景动态创建（不依赖场景节点，避免引用缺失导致空画面）。
+ * 懒构建：节点默认隐藏（active=false）时 onLoad 不会执行，
+ * show() 前先 _ensureBuilt 保证提示内容存在（否则提示永远无法显示）。
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Color, Label, tween, UIOpacity } from 'cc';
@@ -16,16 +18,26 @@ export class NotifyToast extends Component {
 
     private _timer = 0;
     private _active = false;
+    private _built = false;
 
     onLoad(): void {
+        this._ensureBuilt();
+        this.node.active = false;
+    }
+
+    /** 懒构建提示内容（幂等） */
+    private _ensureBuilt(): void {
+        if (this._built) return;
+        this._built = true;
+        this.node.removeAllChildren();
         // 动态创建提示背景 + 文字
         createPanel(this.node, 0, 0, 480, 52, new Color(0, 0, 0, 170), 26);
         this.toastLabel = createLabel(this.node, '', 0, 0, 24, new Color(255, 240, 200, 255));
-        this.node.active = false;
     }
 
     /** 显示提示（由 GameManager.notify 触发） */
     show(text: string): void {
+        this._ensureBuilt();
         if (!this.toastLabel) return;
         this.toastLabel.string = text;
         this.node.active = true;

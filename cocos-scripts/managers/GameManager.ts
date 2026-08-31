@@ -8,7 +8,7 @@
  * 仅需「Canvas + Main Camera + 本节点」即可运行，
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
-import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color } from 'cc';
+import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label } from 'cc';
 import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
@@ -86,6 +86,17 @@ export class GameManager extends Component {
 
         // 通知事件监听
         this.node.on('notify', this._onNotify, this);
+
+        // 全局异常上屏：微信用户不便抓 console，异常直接显示在屏幕上便于截图反馈
+        try {
+            const wx = (globalThis as any).wx;
+            if (wx && typeof wx.onError === 'function') {
+                wx.onError((err: any) => {
+                    const msg = err && err.stack ? String(err.stack) : (err && err.message ? String(err.message) : String(err));
+                    this._showErrorTip('全局异常 ' + msg);
+                });
+            }
+        } catch { /* 非微信环境忽略 */ }
 
         this.state = GameState.MENU;
         this._showUI('menu');
@@ -288,43 +299,75 @@ export class GameManager extends Component {
     // ===== 状态切换 =====
 
     startGame(): void {
-        // 首次用户手势（点击/空格）内解锁音频并启动背景音乐
-        this.audioManager?.unlock();
-        // 重置所有系统
-        this.worldManager?.reset();
-        this.spawnManager?.reset();
-        this.playerController?.reset();
+        // 分步执行 + try/catch：任一步失败时把异常显示在屏幕上（微信不便抓 console，便于截图定位）
+        let step = 'unlock';
+        try {
+            // 首次用户手势（点击/空格）内解锁音频并启动背景音乐
+            this.audioManager?.unlock();
+            // 重置所有系统
+            step = 'reset';
+            this.worldManager?.reset();
+            this.spawnManager?.reset();
+            this.playerController?.reset();
 
-        // 生成地形
-        const terrain = this.worldManager?.generateTerrain();
+            // 生成地形
+            step = 'terrain';
+            this.worldManager?.generateTerrain();
 
-        // 放置玩家
-        const player = this.playerController!;
-        player.worldManager = this.worldManager;
-        player.audioManager = this.audioManager;
-        player.gameManager = this;
-        player.joystick = this.joystick;
-        player.cameraFollow = this.cameraFollow;
-        player.entityManager = this.entityManager;
-        player.placeAtStart();
+            // 放置玩家
+            step = 'player';
+            const player = this.playerController;
+            if (!player) { this._showErrorTip('启动失败 @player：playerController 缺失'); return; }
+            player.worldManager = this.worldManager;
+            player.audioManager = this.audioManager;
+            player.gameManager = this;
+            player.joystick = this.joystick;
+            player.cameraFollow = this.cameraFollow;
+            player.entityManager = this.entityManager;
+            player.placeAtStart();
 
-        // 摇杆状态感知：非 PLAYING 状态不响应触摸（避免拦截升级卡牌点击）
-        if (this.joystick) this.joystick.gameManager = this;
+            // 摇杆状态感知：非 PLAYING 状态不响应触摸（避免拦截升级卡牌点击）
+            if (this.joystick) this.joystick.gameManager = this;
 
-        // 设置相机
-        this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
+            // 设置相机
+            step = 'camera';
+            this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
 
-        // 设置生成器
-        this.spawnManager?.setup(this.entityManager!, player);
-        if (this.spawnManager) {
-            this.spawnManager.worldManager = this.worldManager;
-            this.spawnManager.audioManager = this.audioManager;
-            this.spawnManager.gameManager = this;
+            // 设置生成器
+            step = 'spawn';
+            this.spawnManager?.setup(this.entityManager!, player);
+            if (this.spawnManager) {
+                this.spawnManager.worldManager = this.worldManager;
+                this.spawnManager.audioManager = this.audioManager;
+                this.spawnManager.gameManager = this;
+            }
+
+            step = 'ui';
+            this.playTime = 0;
+            this.state = GameState.PLAYING;
+            this._showUI('none');
+        } catch (e) {
+            const msg = e instanceof Error ? (e.message + '\n' + (e.stack || '')) : String(e);
+            console.error('[Clownfish] startGame 失败 @' + step, e);
+            this._showErrorTip('启动失败 @' + step + '：' + msg);
         }
+    }
 
-        this.playTime = 0;
-        this.state = GameState.PLAYING;
-        this._showUI('none');
+    /** 启动/全局异常上屏提示（红色文字，便于真机截图反馈） */
+    private _showErrorTip(msg: string): void {
+        console.error('[Clownfish] ' + msg);
+        const canvas = this.node.scene?.getChildByName('Canvas') ?? find('Canvas') ?? undefined;
+        const parent = canvas ?? this.node;
+        let tip = parent.getChildByName('ErrorTip');
+        if (!tip) {
+            tip = createLabel(parent, '', 0, -300, 22, new Color(255, 90, 90, 255));
+            tip.name = 'ErrorTip';
+            tip.setPosition(0, -300, 0);
+        }
+        const label = tip.getComponent(Label) ?? tip.addComponent(Label);
+        label.overflow = Label.Overflow.RESIZE_HEIGHT;
+        label.enableWrapText = true;
+        label.string = msg.slice(0, 300);
     }
 
     pause(): void {

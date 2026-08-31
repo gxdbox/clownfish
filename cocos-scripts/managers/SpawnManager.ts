@@ -205,9 +205,9 @@ export class SpawnManager extends Component {
         this._spawnBigGem(pos.x, pos.y);
     }
 
-    /** 溅射生成经验宝石 */
+    /** 溅射生成经验宝石（零素材兼容：无 pickupPrefab 时走自举节点，不能因缺预制体而断绝经验来源） */
     private _spawnGems(x: number, y: number, count: number, radius: number = 70): void {
-        if (!this.pickupPrefab || !this._entityManager) return;
+        if (!this._entityManager) return;
         for (let i = 0; i < count; i++) {
             const a = Math.random() * Math.PI * 2;
             const r = Math.random() * radius;

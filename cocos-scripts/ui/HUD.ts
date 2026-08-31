@@ -35,6 +35,7 @@ export class HUD extends Component {
     onLoad(): void {
         // 动态创建 HUD（以屏幕中心 (0,0) 为基准，设计分辨率 1280x720）
         this.hpLabel = createLabel(this.node, 'HP 100/100', -400, 300, 28, new Color(255, 100, 100, 255));
+        this.hpBar = createBar(this.node, -400, 272, 240, 14, new Color(255, 90, 90, 255));
         this.levelLabel = createLabel(this.node, 'Lv.1', -400, 252, 22, new Color(255, 205, 125, 255));
         this.waveLabel = createLabel(this.node, '第 1 波', 400, 300, 24, new Color(150, 215, 255, 255));
         this.timeLabel = createLabel(this.node, '00:00', 400, 252, 24, new Color(200, 200, 220, 255));

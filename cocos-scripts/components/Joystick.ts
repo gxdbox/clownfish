@@ -3,7 +3,7 @@
  * 挂在 JoystickNode 上。左半屏移动摇杆，右半屏瞄准摇杆。
  * 桌面端支持 WASD / 方向键。
  */
-import { _decorator, Component, input, Input, EventTouch, EventKeyboard, KeyCode, Graphics, Vec2, Vec3, view, Color, UITransform } from 'cc';
+import { _decorator, Component, input, Input, EventTouch, EventKeyboard, KeyCode, Graphics, Vec2, Vec3, view, Color, UITransform, Label, UIOpacity, sys, Node, Layers } from 'cc';
 import { GameState } from '../config';
 import type { GameManager } from '../managers/GameManager';
 const { ccclass, property } = _decorator;
@@ -42,6 +42,18 @@ export class Joystick extends Component {
     private _keys: Record<string, boolean> = {};
     private _gfx: Graphics | null = null;
 
+    // ===== 触屏操作提示（淡显，用过即淡出） =====
+    private _hintL: Node | null = null;
+    private _hintR: Node | null = null;
+    private _hintOpL = 0;
+    private _hintOpR = 0;
+    private _hintTime = 0;
+    private _hintLX = 0;
+    private _hintLY = 0;
+    private _hintRX = 0;
+    private _hintRY = 0;
+    private _hintsOn = false;
+
     /** 状态机引用（由 GameManager 注入），非 PLAYING 状态忽略触摸避免拦截 UI 点击 */
     gameManager: GameManager | null = null;
 
@@ -64,6 +76,46 @@ export class Joystick extends Component {
         // input.on(Input.EventType.DEVICE_CHANGED, ...) 可选
 
         this._gfx = this.node.getComponent(Graphics);
+
+        // 提示文字节点（初始隐藏）
+        this._hintL = this._createHint('左侧滑动 · 移动', -380, -260);
+        this._hintR = this._createHint('右侧滑动 · 瞄准', 380, -260);
+    }
+
+    /** 创建淡显提示文字节点 */
+    private _createHint(text: string, x: number, y: number): Node {
+        const n = new Node('Hint');
+        n.layer = Layers.Enum.UI_2D;
+        n.setParent(this.node);
+        n.setPosition(x, y, 0);
+        const label = n.addComponent(Label);
+        label.string = text;
+        label.fontSize = 20;
+        label.lineHeight = 26;
+        label.color = new Color(170, 205, 230, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        n.addComponent(UIOpacity).opacity = 0;
+        return n;
+    }
+
+    /** 开局显示操作提示（仅触屏设备；用过或超时后淡出） */
+    showHints(): void {
+        const isTouch = sys.isMobile || typeof (globalThis as any).wx !== 'undefined';
+        if (!isTouch || !this._hintL || !this._hintR) return;
+        const vs = view.getVisibleSize();
+        // 屏幕两侧偏下位置（节点居中于屏幕，本地坐标即屏幕中心偏移）
+        this._hintLX = -vs.width / 2 + 150;
+        this._hintLY = -vs.height / 2 + 120;
+        this._hintRX = vs.width / 2 - 150;
+        this._hintRY = -vs.height / 2 + 120;
+        this._hintL.setPosition(this._hintLX, this._hintLY - 80, 0);
+        this._hintR.setPosition(this._hintRX, this._hintRY - 80, 0);
+        this._hintOpL = 110;
+        this._hintOpR = 110;
+        this._hintTime = 0;
+        this._hintsOn = true;
+        this._hintL.getComponent(UIOpacity)!.opacity = this._hintOpL;
+        this._hintR.getComponent(UIOpacity)!.opacity = this._hintOpR;
     }
 
     onDestroy(): void {
@@ -207,12 +259,37 @@ export class Joystick extends Component {
     }
 
     /** 绘制摇杆（叠加在游戏画面之上） */
-    update(): void {
+    update(dt: number): void {
         if (!this._gfx) return;
         const g = this._gfx;
         g.clear();
         if (this._joyMove.active) this._drawJoystick(g, this._joyMove);
         if (this._joyAim.active) this._drawJoystick(g, this._joyAim);
+        this._updateHints(g, dt);
+    }
+
+    /** 提示淡出逻辑 + 淡显摇杆底圈 */
+    private _updateHints(g: Graphics, dt: number): void {
+        if (!this._hintsOn) return;
+        if (this.gameManager && this.gameManager.state !== GameState.PLAYING) return;
+        this._hintTime += dt;
+        // 用过对应摇杆 → 开始淡出；8 秒未用也淡出
+        if (this._joyMove.active || this._hintTime > 8) this._hintOpL = Math.max(0, this._hintOpL - 120 * dt);
+        if (this._joyAim.active || this._hintTime > 8) this._hintOpR = Math.max(0, this._hintOpR - 120 * dt);
+        if (this._hintL) this._hintL.getComponent(UIOpacity)!.opacity = this._hintOpL;
+        if (this._hintR) this._hintR.getComponent(UIOpacity)!.opacity = this._hintOpR;
+        // 淡显底圈：告诉玩家在哪里按
+        if (this._hintOpL > 0 && !this._joyMove.active) {
+            g.fillColor = new Color(127, 215, 255, Math.floor(this._hintOpL * 0.5));
+            g.circle(this._hintLX, this._hintLY, JOY_RADIUS);
+            g.fill();
+        }
+        if (this._hintOpR > 0 && !this._joyAim.active) {
+            g.fillColor = new Color(127, 215, 255, Math.floor(this._hintOpR * 0.5));
+            g.circle(this._hintRX, this._hintRY, JOY_RADIUS);
+            g.fill();
+        }
+        if (this._hintOpL <= 0 && this._hintOpR <= 0) this._hintsOn = false;
     }
 
     private _drawJoystick(g: Graphics, j: JoystickState): void {

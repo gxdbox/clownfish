@@ -8,7 +8,7 @@
  * 仅需「Canvas + Main Camera + 本节点」即可运行，
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
-import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label } from 'cc';
+import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
 import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
@@ -100,6 +100,8 @@ export class GameManager extends Component {
 
         this.state = GameState.MENU;
         this._showUI('menu');
+        // 调试句柄：微信自动化测试可直接取到 GameManager（线上无副作用）
+        (globalThis as any).__cfGM = this;
         console.log('[Clownfish] GameManager 初始化完成，进入 MENU 状态');
     }
 
@@ -170,6 +172,8 @@ export class GameManager extends Component {
                 scene.addChild(pNode);
             }
             this.playerController = pNode.getComponent(PlayerController) ?? pNode.addComponent(PlayerController);
+            // 世界层节点需 RenderRoot2D 才能进入 2D 渲染树（场景根下的 Graphics 否则不绘制）
+            if (!pNode.getComponent(RenderRoot2D)) pNode.addComponent(RenderRoot2D);
         }
 
         // UI 面板（缺则创建，错层级则归位到 UIRoot）
@@ -224,13 +228,45 @@ export class GameManager extends Component {
         }
 
         // 相机跟随（Main Camera 自动挂载）
-        if (!this.cameraFollow) {
-            const camNode = scene.getChildByName('Main Camera')
-                ?? scene.getChildByName('main camera')
-                ?? scene.getComponentInChildren(Camera)?.node ?? null;
+        {
+            const camNode = this.cameraFollow ? this.cameraFollow.node
+                : (scene.getChildByName('Main Camera')
+                    ?? scene.getChildByName('main camera')
+                    ?? scene.getComponentInChildren(Camera)?.node ?? null);
             if (camNode) {
+                // 相机若在 Canvas 下，世界坐标会叠加 Canvas 偏移 → 移到场景根
+                if (camNode.parent !== scene) scene.addChild(camNode);
                 this.cameraFollow = camNode.getComponent(CameraFollow) ?? camNode.addComponent(CameraFollow);
             }
+        }
+
+        // ===== 双相机：世界相机跟随玩家，UI 相机固定叠加 =====
+        // 单相机方案下相机一移动 UI 就出屏，必须拆分
+        const worldCam = this.cameraFollow ? this.cameraFollow.node.getComponent(Camera) : null;
+        if (worldCam) {
+            worldCam.projection = Camera.ProjectionType.ORTHO;
+            worldCam.orthoHeight = 360;
+            worldCam.visibility = Layers.Enum.DEFAULT; // 只渲染世界层
+            worldCam.clearFlags = Camera.ClearFlag.SOLID_COLOR;
+            worldCam.clearColor = new Color(3, 14, 28, 255);
+            worldCam.priority = 0;
+        }
+        let uiCamNode = canvas ? canvas.getChildByName('UICamera') : null;
+        if (!uiCamNode) {
+            uiCamNode = new Node('UICamera');
+            // 挂在 Canvas 下：自动对齐 Canvas 中心（Canvas 位置随屏幕适配变化）
+            if (canvas) canvas.addChild(uiCamNode); else scene.addChild(uiCamNode);
+        }
+        uiCamNode.setPosition(0, 0, 1000);
+        const uiCam = uiCamNode.getComponent(Camera) ?? uiCamNode.addComponent(Camera);
+        uiCam.projection = Camera.ProjectionType.ORTHO;
+        uiCam.orthoHeight = 360;
+        uiCam.visibility = Layers.Enum.UI_2D; // 只渲染 UI 层
+        uiCam.clearFlags = Camera.ClearFlag.DEPTH_ONLY; // 保留世界相机画的颜色
+        uiCam.priority = 1; // 后渲染，叠在上层
+        if (canvas) {
+            const canvasComp = canvas.getComponent(UICanvas);
+            if (canvasComp) canvasComp.cameraComponent = uiCam;
         }
     }
 
@@ -245,6 +281,7 @@ export class GameManager extends Component {
         if (n && uiRoot && n.parent !== uiRoot) uiRoot.addChild(n);
         if (n) {
             n.active = active;
+            n.layer = Layers.Enum.UI_2D; // UI 面板统一 UI_2D 层，由固定 UI 相机渲染
             if (!n.getComponent(UITransform)) this._initUINode(n);
         }
         return n;
@@ -252,6 +289,7 @@ export class GameManager extends Component {
 
     /** 初始化 UI 节点几何：锚点居中 + 铺满设计分辨率 1280x720 */
     private _initUINode(n: Node): void {
+        n.layer = Layers.Enum.UI_2D;
         const t = n.getComponent(UITransform) || n.addComponent(UITransform);
         t.setAnchorPoint(0.5, 0.5);
         t.setContentSize(1280, 720);
@@ -261,6 +299,8 @@ export class GameManager extends Component {
     /** 初始化世界层节点几何：锚点左下 + 世界尺寸 */
     private _initWorldNode(n: Node): void {
         n.setPosition(0, 0, 0);
+        n.layer = Layers.Enum.DEFAULT;
+        if (!n.getComponent(RenderRoot2D)) n.addComponent(RenderRoot2D);
         const t = n.getComponent(UITransform) || n.addComponent(UITransform);
         t.setAnchorPoint(0, 0);
         t.setContentSize(WORLD.SIZE, WORLD.SIZE);
@@ -301,21 +341,25 @@ export class GameManager extends Component {
     startGame(): void {
         // 分步执行 + try/catch：任一步失败时把异常显示在屏幕上（微信不便抓 console，便于截图定位）
         let step = 'unlock';
+        console.log('[Clownfish] startGame 开始');
         try {
             // 首次用户手势（点击/空格）内解锁音频并启动背景音乐
             this.audioManager?.unlock();
             // 重置所有系统
             step = 'reset';
+            console.log('[Clownfish] startGame @reset');
             this.worldManager?.reset();
             this.spawnManager?.reset();
             this.playerController?.reset();
 
             // 生成地形
             step = 'terrain';
+            console.log('[Clownfish] startGame @terrain');
             this.worldManager?.generateTerrain();
 
             // 放置玩家
             step = 'player';
+            console.log('[Clownfish] startGame @player');
             const player = this.playerController;
             if (!player) { this._showErrorTip('启动失败 @player：playerController 缺失'); return; }
             player.worldManager = this.worldManager;
@@ -331,10 +375,12 @@ export class GameManager extends Component {
 
             // 设置相机
             step = 'camera';
+            console.log('[Clownfish] startGame @camera');
             this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
 
             // 设置生成器
             step = 'spawn';
+            console.log('[Clownfish] startGame @spawn');
             this.spawnManager?.setup(this.entityManager!, player);
             if (this.spawnManager) {
                 this.spawnManager.worldManager = this.worldManager;
@@ -346,6 +392,9 @@ export class GameManager extends Component {
             this.playTime = 0;
             this.state = GameState.PLAYING;
             this._showUI('none');
+            // 触屏操作提示（淡显，用过即淡出）
+            this.joystick?.showHints();
+            console.log('[Clownfish] startGame 完成，进入 PLAYING');
         } catch (e) {
             const msg = e instanceof Error ? (e.message + '\n' + (e.stack || '')) : String(e);
             console.error('[Clownfish] startGame 失败 @' + step, e);

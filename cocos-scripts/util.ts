@@ -2,7 +2,7 @@
  * util.ts — 通用工具函数（无分配优先）
  * Cocos Creator 3.8.8 迁移版
  */
-import { Color, Graphics, Label, Node, UITransform } from 'cc';
+import { Color, Graphics, Label, Node, UITransform, Layers } from 'cc';
 
 /** 限制值在 [min, max] 范围内 */
 export function clamp(v: number, min: number, max: number): number {
@@ -102,6 +102,7 @@ export function ensureRenderTransform(node: Node, w = 64, h = 64): UITransform {
 /** 创建文本节点 */
 export function createLabel(parent: Node, text: string, x: number, y: number, fontSize = 28, color?: Color): Label {
     const node = new Node('Label');
+    node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
     node.setPosition(x, y, 0);
     const label = node.addComponent(Label);
@@ -117,6 +118,7 @@ export function createLabel(parent: Node, text: string, x: number, y: number, fo
 /** 创建圆角纯色面板 */
 export function createPanel(parent: Node, x: number, y: number, w: number, h: number, color: Color, radius = 14): Node {
     const node = new Node('Panel');
+    node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
     node.setPosition(x, y, 0);
     const tf = node.addComponent(UITransform);
@@ -131,6 +133,7 @@ export function createPanel(parent: Node, x: number, y: number, w: number, h: nu
 /** 创建按钮（圆角背景 + 居中文字 + 点击回调），返回节点和文字 */
 export function createButton(parent: Node, text: string, x: number, y: number, onTap: () => void, w = 260, h = 64): { node: Node; label: Label } {
     const node = new Node('Button');
+    node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
     node.setPosition(x, y, 0);
     const tf = node.addComponent(UITransform);
@@ -152,10 +155,12 @@ export function createButton(parent: Node, text: string, x: number, y: number, o
 /** 创建水平进度条，set(p) 更新进度 0~1 */
 export function createBar(parent: Node, x: number, y: number, w: number, h: number, fgColor: Color): { set: (p: number) => void } {
     const node = new Node('Bar');
+    node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
     node.setPosition(x, y, 0);
     createPanel(node, 0, 0, w, h, new Color(30, 30, 50, 200), h / 2);
     const fg = new Node('BarFill');
+    fg.layer = Layers.Enum.UI_2D;
     fg.setParent(node);
     const tf = fg.addComponent(UITransform);
     tf.setContentSize(w, h);

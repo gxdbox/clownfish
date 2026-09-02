@@ -10,7 +10,7 @@
  * 若等 _onShow 时才构建会导致弹框空白/找不到弹框 → 升级后卡死。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Color, Graphics, Label, Node, UITransform, Widget, tween, Vec3 } from 'cc';
+import { _decorator, Component, Color, Graphics, Label, Node, UITransform, Widget, tween, Vec3, Layers, view, sys } from 'cc';
 import { createLabel, createPanel } from '../util';
 import { UPGRADE } from '../config';
 import type { GameManager } from '../managers/GameManager';
@@ -62,17 +62,28 @@ export class LevelUpUI extends Component {
         this.node.removeAllChildren();
         this.cardNodes = [];
 
-        // 全屏半透明遮罩（突出升级卡牌，压暗游戏画面）
-        createPanel(this.node, 0, 0, 1280, 720, new Color(8, 14, 30, 184), 0);
+        // 可见区域可能比设计分辨率更宽（超宽屏）或更矮（手机横屏）
+        const vs = view.getVisibleSize();
 
-        // 标题 + 键盘操作提示
-        createLabel(this.node, '✨ 升级！选择一项', 0, 170, 38, new Color(255, 230, 150, 255));
-        createLabel(this.node, '← → 切换 · 回车确认 · 1/2/3 直选', 0, 126, 18, new Color(140, 170, 190, 255));
+        // 全屏半透明遮罩（突出升级卡牌，压暗游戏画面；尺寸覆盖整个可见区）
+        createPanel(this.node, 0, 0, Math.max(1280, vs.width + 8), Math.max(720, vs.height + 8), new Color(8, 14, 30, 184), 0);
+
+        // 内容容器：矮屏时整体缩放，保证标题+卡牌完整可见
+        const content = new Node('Content');
+        content.layer = Layers.Enum.UI_2D;
+        content.setParent(this.node);
+        const s = Math.min(1, vs.height / 760, vs.width / 1040);
+        content.setScale(s, s, 1);
+
+        // 标题 + 操作提示（触屏：点卡牌；桌面：键盘导航）
+        const isTouch = sys.isMobile || typeof (globalThis as any).wx !== 'undefined';
+        createLabel(content, '✨ 升级！选择一项', 0, 170, 38, new Color(255, 230, 150, 255));
+        createLabel(content, isTouch ? '点击卡牌选择' : '← → 切换 · 回车确认 · 1/2/3 直选', 0, 126, 18, new Color(140, 170, 190, 255));
 
         // 3 张卡牌（含 iconLabel / nameLabel / descLabel）
         const xs = [-280, 0, 280];
         for (let i = 0; i < 3; i++) {
-            const card = createPanel(this.node, xs[i], -70, 260, 320, new Color(10, 38, 62, 245), 18);
+            const card = createPanel(content, xs[i], -70, 260, 320, new Color(10, 38, 62, 245), 18);
             card.name = 'Card' + i;
 
             createLabel(card, '', 0, 110, 52).node.name = 'iconLabel';
@@ -90,6 +101,7 @@ export class LevelUpUI extends Component {
 
             // 选中高亮框（独立子节点，避免污染卡牌背景 Graphics）
             const hl = new Node('Highlight');
+            hl.layer = Layers.Enum.UI_2D;
             hl.setParent(card);
             const hlTf = hl.addComponent(UITransform);
             hlTf.setContentSize(260, 320);

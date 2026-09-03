@@ -6,13 +6,15 @@
  */
 import { _decorator, Component, Node, Prefab, instantiate, view } from 'cc';
 import { rand, clamp } from '../util';
-import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, GameState } from '../config';
+import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, BOSS, MAPS, GameState } from '../config';
 import type { WorldManager } from './WorldManager';
 import type { AudioManager } from './AudioManager';
 import type { GameManager } from './GameManager';
 import type { PlayerController } from '../components/PlayerController';
 import { EnemyAI } from '../components/EnemyAI';
 import { EliteAI } from '../components/EliteAI';
+import { BossAI } from '../components/BossAI';
+import { Portal } from '../components/Portal';
 import { Pickup } from '../components/Pickup';
 const { ccclass, property } = _decorator;
 
@@ -30,12 +32,15 @@ export class SpawnManager extends Component {
     gameManager: GameManager | null = null;
 
     // ===== 波次状态 =====
-    wave = 1;
+    wave = 1;                  // 全局波次（驱动难度曲线，跨地图持续递增）
+    mapWave = 0;               // 当前地图内波次（驱动 Boss 出场，换图重置）
     waveTimer = 0;
     spawnTimer = 0;
     eliteTimer = 0;
     eliteCount = 0;
     kills = 0;
+    bossActive = false;        // Boss 战中：暂停普通/精英生成，聚焦战斗
+    currentBoss: BossAI | null = null;
 
     private _entityManager: Node | null = null;
     private _player: PlayerController | null = null;
@@ -49,11 +54,25 @@ export class SpawnManager extends Component {
     /** 重置（新游戏时调用） */
     reset(): void {
         this.wave = 1;
+        this.mapWave = 0;
         this.waveTimer = 0;
         this.spawnTimer = 0;
         this.eliteTimer = 0;
         this.eliteCount = 0;
         this.kills = 0;
+        this.bossActive = false;
+        this.currentBoss = null;
+    }
+
+    /** 换图重置（保留全局波次难度，重置本图进度与 Boss 状态） */
+    resetForNewMap(): void {
+        this.mapWave = 0;
+        this.waveTimer = 0;
+        this.spawnTimer = 0;
+        this.eliteTimer = 0;
+        this.eliteCount = 0;
+        this.bossActive = false;
+        this.currentBoss = null;
     }
 
     update(dt: number): void {
@@ -61,14 +80,24 @@ export class SpawnManager extends Component {
         if (this.gameManager?.state !== GameState.PLAYING) return;
         if (!this._player || this._player.dead) return;
 
+        // Boss 战：暂停普通/精英生成（聚焦战斗，避免怪物海淹没 Boss 压迫感）
+        if (this.bossActive) return;
+
         // 波次计时
         this.waveTimer += dt;
         if (this.waveTimer >= WAVE.DURATION) {
             this.waveTimer -= WAVE.DURATION;
             this.wave++;
+            this.mapWave++;
             // 每 5 波提示
             if (this.wave % WAVE.NOTE_EVERY === 0) {
                 this.gameManager?.notify(`⚠ 第 ${this.wave} 波：敌人显著增强了！`);
+            }
+            // Boss 出场：本图推进到指定波次后登场
+            const mapIndex = this.gameManager?.mapIndex ?? 0;
+            if (this.mapWave >= MAPS[mapIndex % MAPS.length].bossWave) {
+                this._spawnBoss();
+                return;
             }
         }
 
@@ -114,12 +143,15 @@ export class SpawnManager extends Component {
         return 2;
     }
 
-    /** 生成一个普通敌人 */
+    /** 生成一个普通敌人（按当前地图过滤敌人类型 + 血量倍率） */
     private _spawnNormal(): void {
         if (!this._entityManager || !this._player) return;
 
+        const mapIndex = this.gameManager?.mapIndex ?? 0;
+        const map = MAPS[mapIndex % MAPS.length];
+        const pool = map.enemies; // 该图出现的敌人类型索引
         const pos = this._getSpawnPos();
-        const type = Math.floor(Math.random() * 4);
+        const type = pool[Math.floor(Math.random() * pool.length)];
 
         const node = this._createEntityNode(this.enemyPrefab, 'Enemy');
         this._entityManager.addChild(node);
@@ -129,7 +161,7 @@ export class SpawnManager extends Component {
             ai.audioManager = this.audioManager;
             ai.gameManager = this.gameManager;
             ai.player = this._player;
-            ai.init(pos.x, pos.y, this.wave, type);
+            ai.init(pos.x, pos.y, this.wave, type, map.enemyHpMult);
         }
     }
 
@@ -153,6 +185,55 @@ export class SpawnManager extends Component {
         }
 
         this.gameManager?.notify(' 精英敌人来袭！');
+    }
+
+    /** 生成 Boss（本图第 N 波触发；需传入当前地图下标） */
+    private _spawnBoss(): void {
+        if (!this._entityManager || !this._player) return;
+        if (this.bossActive || this.currentBoss) return;
+
+        const mapIndex = this.gameManager?.mapIndex ?? 0;
+        const pos = this._getSpawnPos();
+        this.bossActive = true;
+
+        const node = this._createEntityNode(null, 'Boss');
+        this._entityManager.addChild(node);
+        const ai = node.getComponent(BossAI) ?? node.addComponent(BossAI);
+        if (ai) {
+            ai.worldManager = this.worldManager;
+            ai.audioManager = this.audioManager;
+            ai.gameManager = this.gameManager;
+            ai.player = this._player;
+            ai.entityManager = this._entityManager;
+            ai.init(pos.x, pos.y, mapIndex);
+        }
+        this.currentBoss = ai;
+        this.gameManager?.notify(`👑 ${MAPS[mapIndex % MAPS.length].name} 的 Boss 出现了！`);
+    }
+
+    /** Boss 击杀（由 GameManager 回调）：掉落 + 生成传送门 */
+    onBossKilled(boss: BossAI): void {
+        this.kills++;
+        this.bossActive = false;
+        this.currentBoss = null;
+
+        const pos = boss.node.position;
+        // 大量经验宝石 + 大血球（传送门由 GameManager 决定是否生成）
+        this._spawnGems(pos.x, pos.y, 10, 120);
+        this._spawnPickupAt(pos.x, pos.y, 'hpBig', 0);
+    }
+
+    /** 生成传送门（玩家接触后 advanceMap） */
+    spawnPortal(x: number, y: number): void {
+        if (!this._entityManager) return;
+        const node = this._createEntityNode(null, 'Portal');
+        this._entityManager.addChild(node);
+        const portal = node.getComponent(Portal) ?? node.addComponent(Portal);
+        if (portal) {
+            portal.gameManager = this.gameManager;
+            portal.player = this._player;
+            portal.init(x, y);
+        }
     }
 
     /** 实体节点创建：有预制体用预制体实例化，无预制体创建裸节点（组件与视觉由目标组件自举） */

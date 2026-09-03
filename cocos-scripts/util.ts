@@ -2,7 +2,7 @@
  * util.ts — 通用工具函数（无分配优先）
  * Cocos Creator 3.8.8 迁移版
  */
-import { Color, Graphics, Label, Node, UITransform, Layers } from 'cc';
+import { Color, Graphics, Label, Node, UITransform, Layers, Sprite, SpriteFrame, resources } from 'cc';
 
 /** 限制值在 [min, max] 范围内 */
 export function clamp(v: number, min: number, max: number): number {
@@ -94,6 +94,37 @@ export function ensureRenderTransform(node: Node, w = 64, h = 64): UITransform {
     t.setAnchorPoint(0.5, 0.5);
     if (t.contentSize.width <= 0) t.setContentSize(w, h);
     return t;
+}
+
+/**
+ * 从 resources 加载图片素材并挂到 host 节点的 'Sprite' 子节点上。
+ * - path 形如 'sprites/enemy_crab'（不带扩展名、不带 resources/ 前缀）
+ * - 加载成功：设置 spriteFrame + 隐藏 host 的 'Body' 子节点（Graphics 兜底）
+ * - 加载失败：什么都不做，Graphics 兜底保持可见（零素材仍可玩）
+ * - 返回 Sprite 组件（可能为 null，若 Sprite 被 treeshake）
+ */
+export function loadSpriteOnto(host: Node, path: string, w: number, h: number): Sprite | null {
+    let sNode = host.getChildByName('Sprite');
+    if (!sNode) {
+        sNode = new Node('Sprite');
+        sNode.setPosition(0, 0, 0);
+        host.addChild(sNode);
+    }
+    const sprite = sNode.getComponent(Sprite) || sNode.addComponent(Sprite);
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    sprite.trim = false;
+    const tf = sNode.getComponent(UITransform) || sNode.addComponent(UITransform);
+    tf.setAnchorPoint(0.5, 0.5);
+    tf.setContentSize(w, h);
+    sNode.active = false; // 加载完成前隐藏，避免空 Sprite 占位
+    resources.load(path + '/spriteFrame', SpriteFrame, (err, sf) => {
+        if (err || !sf || !host || !host.isValid) return;
+        sprite.spriteFrame = sf;
+        sNode.active = true;
+        const body = host.getChildByName('Body');
+        if (body) body.active = false; // 隐藏 Graphics 兜底
+    });
+    return sprite;
 }
 
 // ===== 动态 UI 创建工具（纯代码 UI，不依赖场景节点与贴图） =====

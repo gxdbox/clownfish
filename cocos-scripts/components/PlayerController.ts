@@ -1,11 +1,12 @@
 /**
- * PlayerController.ts — 玩家行为（移动/自动攻击/受击/护盾/升级/拾取效果）
+ * PlayerController.ts — 玩家行为（移动/自动攻击/冲刺/受击/护盾/升级/拾取效果）
  * 挂在 Player 预制体上。
+ * 冲刺（核心动词，混合流）：手动触发 → 向移动方向高速位移 + 无敌帧 + 穿过敌人造成伤害 + 残影拖尾动画。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3 } from 'cc';
-import { clamp, ensureRenderTransform } from '../util';
-import { PLAYER, BULLET, PICKUP, WORLD, GameState } from '../config';
+import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3, Sprite, SpriteFrame, UITransform } from 'cc';
+import { clamp, ensureRenderTransform, loadSpriteOnto } from '../util';
+import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed } from '../config';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -19,6 +20,11 @@ export interface UpgradeChoice {
     name: string;
     desc: string;
     icon: string;
+}
+
+/** 可受击的敌人组件（EnemyAI/EliteAI/BossAI 均实现 hurtEnemy） */
+interface Hurtable {
+    hurtEnemy(damage: number, bx: number, by: number): void;
 }
 
 @ccclass('PlayerController')
@@ -40,7 +46,7 @@ export class PlayerController extends Component {
     hp = PLAYER.MAX_HP;
     level = 1;
     exp = 0;
-    expNext = 12; // 8 + 1 * 4
+    expNext = 12;
     speed = PLAYER.SPEED;
     fireInterval = PLAYER.FIRE_INTERVAL;
     bulletSpeed = PLAYER.BULLET_SPEED;
@@ -58,17 +64,35 @@ export class PlayerController extends Component {
     faceAngle = 0;
     dead = false;
 
+    // ===== 冲刺状态 =====
+    dashTimer = 0;                    // 冲刺进行中剩余时间(秒)
+    dashCooldown = 0;                 // 当前冷却剩余(秒)
+    dashCooldownMax = DASH.COOLDOWN;  // 冲刺冷却上限（可升级）
+    dashDamage = DASH.DAMAGE;         // 冲刺撞击伤害（可升级）
+    private _dashDirX = 1;
+    private _dashDirY = 0;
+    private _dashHitSet = new Set<object>();
+    private _trailAcc = 0;
+    private _ghosts: { node: Node; life: number }[] = [];
+
     private _pos = new Vec3();
 
     onLoad(): void {
         this.expNext = this._expNeed(1);
         this._initVisual();
+        this._loadPlayerSprite();
     }
 
-    /** 玩家视觉：Graphics 像素风小丑鱼（不依赖贴图资源，避免 bundle 缺失导致隐形） */
+    /** 玩家视觉：Graphics 像素风小丑鱼兜底（素材加载成功后由 loadSpriteOnto 隐藏） */
     private _initVisual(): void {
-        ensureRenderTransform(this.node, 64, 64);
-        const g = this.node.getComponent(Graphics) || this.node.addComponent(Graphics);
+        let body = this.node.getChildByName('Body');
+        if (!body) {
+            body = new Node('Body');
+            body.setPosition(0, 0, 0);
+            this.node.addChild(body);
+        }
+        ensureRenderTransform(body, 64, 64);
+        const g = body.getComponent(Graphics) || body.addComponent(Graphics);
         g.clear();
         // 身体（橙色圆角矩形，面向右）
         g.fillColor = new Color(255, 140, 40, 255);
@@ -100,6 +124,11 @@ export class PlayerController extends Component {
         try { g.flush && g.flush(); } catch {}
     }
 
+    /** 加载 AI 小丑鱼素材（透明 PNG）；失败保持 Graphics 兜底 */
+    private _loadPlayerSprite(): void {
+        loadSpriteOnto(this.node, SPRITES.PLAYER, 48, 48);
+    }
+
     /** 重置玩家属性（新游戏时调用） */
     reset(): void {
         this.maxHp = PLAYER.MAX_HP;
@@ -123,6 +152,16 @@ export class PlayerController extends Component {
         this.boostMult = 1;
         this.faceAngle = 0;
         this.dead = false;
+        // 冲刺状态重置
+        this.dashTimer = 0;
+        this.dashCooldown = 0;
+        this.dashCooldownMax = DASH.COOLDOWN;
+        this.dashDamage = DASH.DAMAGE;
+        this._dashHitSet.clear();
+        this._trailAcc = 0;
+        for (const gh of this._ghosts) gh.node.destroy();
+        this._ghosts = [];
+        this.node.setScale(1, 1, 1);
     }
 
     /** 放置玩家到起始位置 */
@@ -131,17 +170,23 @@ export class PlayerController extends Component {
     }
 
     private _expNeed(level: number): number {
-        return 8 + level * 4;
+        // 升级曲线（马里奥式：前几级快、逐级明显变慢，参考成熟游戏）
+        return expNeed(level);
     }
 
     update(dt: number): void {
         if (this.dead) return;
         // 仅 PLAYING 状态运行（引擎自动调用本方法，需自行判断状态）
         if (this.gameManager?.state !== GameState.PLAYING) return;
-        this._updateMove(dt);
         this._updateTimers(dt);
+        this._updateGhosts(dt);
         this._updateRegen(dt);
         this._updateFire(dt);
+        if (this.dashTimer > 0) {
+            this._updateDash(dt);
+        } else {
+            this._updateMove(dt);
+        }
     }
 
     // ===== 移动 =====
@@ -166,6 +211,7 @@ export class PlayerController extends Component {
     // ===== 计时 =====
     private _updateTimers(dt: number): void {
         if (this.invincible > 0) this.invincible -= dt;
+        if (this.dashCooldown > 0) this.dashCooldown -= dt;
         if (this.boostTimer > 0) {
             this.boostTimer -= dt;
             if (this.boostTimer <= 0) this.boostMult = 1;
@@ -239,8 +285,6 @@ export class PlayerController extends Component {
 
     /** 射程内最近敌人 */
     private _findNearestEnemy(maxDist: number): { x: number; y: number } | null {
-        // 简化版：遍历 EntityManager 子节点找最近敌人
-        // 实际项目中应使用 WorldManager 的空间哈希
         if (!this.entityManager) return null;
         const pos = this.node.position;
         let best: { x: number; y: number } | null = null;
@@ -248,7 +292,7 @@ export class PlayerController extends Component {
         const children = this.entityManager.children;
         for (const child of children) {
             if (!child.active) continue;
-            const enemyAI = child.getComponent('EnemyAI') || child.getComponent('EliteAI');
+            const enemyAI = this._enemyComponent(child);
             if (!enemyAI) continue;
             const cpos = child.position;
             const d2 = (cpos.x - pos.x) ** 2 + (cpos.y - pos.y) ** 2;
@@ -258,6 +302,132 @@ export class PlayerController extends Component {
             }
         }
         return best;
+    }
+
+    /** 取子节点上的敌人组件（EnemyAI/EliteAI/BossAI） */
+    private _enemyComponent(child: Node): Hurtable | null {
+        const e = child.getComponent('EnemyAI') || child.getComponent('EliteAI') || child.getComponent('BossAI');
+        return (e as unknown as Hurtable) ?? null;
+    }
+
+    // ===== 冲刺 =====
+
+    /** 尝试冲刺（由 Joystick 按钮/按键调用） */
+    tryDash(): void {
+        if (this.dead || this.dashCooldown > 0 || this.dashTimer > 0) return;
+        // 方向：优先摇杆移动方向，否则朝 faceAngle（上次朝向）
+        let dx = 0, dy = 0;
+        if (this.joystick && (this.joystick.moveX !== 0 || this.joystick.moveY !== 0)) {
+            dx = this.joystick.moveX;
+            dy = this.joystick.moveY;
+        } else {
+            dx = Math.cos(this.faceAngle);
+            dy = Math.sin(this.faceAngle);
+        }
+        const len = Math.hypot(dx, dy);
+        if (len < 0.001) { dx = 1; dy = 0; }
+        else { dx /= len; dy /= len; }
+
+        this._dashDirX = dx;
+        this._dashDirY = dy;
+        this.faceAngle = Math.atan2(dy, dx);
+        this.dashTimer = DASH.DURATION;
+        this.dashCooldown = this.dashCooldownMax;
+        this.invincible = Math.max(this.invincible, DASH.IFRAME);
+        this._dashHitSet.clear();
+        this._trailAcc = 0;
+        // 冲刺拉伸动画（朝移动方向拉长）
+        this.node.setScale(1.25, 0.8, 1);
+        this.node.setRotationFromEuler(0, 0, -this.faceAngle * 180 / Math.PI);
+        this.audioManager?.dash();
+    }
+
+    /** 冲刺进行中：高速位移 + 撞击伤害 + 残影 */
+    private _updateDash(dt: number): void {
+        this.dashTimer -= dt;
+        const pos = this.node.position;
+        const nx = pos.x + this._dashDirX * DASH.SPEED * dt;
+        const ny = pos.y + this._dashDirY * DASH.SPEED * dt;
+        const resolved = this.worldManager!.moveResolve(nx, ny, PLAYER.RADIUS);
+        this.node.setPosition(
+            clamp(resolved[0], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS),
+            clamp(resolved[1], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS),
+            pos.z
+        );
+        this._applyDashDamage();
+
+        // 残影拖尾
+        this._trailAcc += dt;
+        const interval = DASH.DURATION / DASH.TRAIL_COUNT;
+        while (this._trailAcc >= interval) {
+            this._trailAcc -= interval;
+            this._spawnDashGhost();
+        }
+
+        if (this.dashTimer <= 0) {
+            this.node.setScale(1, 1, 1);
+        }
+    }
+
+    /** 冲刺撞击：穿过敌人造成伤害（每敌每次冲刺仅一次） */
+    private _applyDashDamage(): void {
+        if (!this.entityManager) return;
+        const pos = this.node.position;
+        const r = DASH.HIT_RADIUS;
+        for (const child of this.entityManager.children) {
+            if (!child.active) continue;
+            const e = this._enemyComponent(child);
+            if (!e || this._dashHitSet.has(e as object)) continue;
+            const cpos = child.position;
+            const d2 = (cpos.x - pos.x) ** 2 + (cpos.y - pos.y) ** 2;
+            if (d2 < r * r) {
+                this._dashHitSet.add(e as object);
+                e.hurtEnemy(this.dashDamage, pos.x, pos.y);
+                this.audioManager?.hit();
+            }
+        }
+    }
+
+    /** 生成冲刺残影（复用主角 AI 素材帧，无则 Graphics 圆兜底） */
+    private _spawnDashGhost(): void {
+        if (!this.entityManager) return;
+        const pos = this.node.position;
+        const ghost = new Node('DashGhost');
+        this.entityManager.addChild(ghost);
+        ghost.setPosition(pos.x, pos.y, 0);
+        ghost.setRotationFromEuler(0, 0, -this.faceAngle * 180 / Math.PI);
+
+        const frame: SpriteFrame | null = this.node.getChildByName('Sprite')?.getComponent(Sprite)?.spriteFrame ?? null;
+        if (frame && Sprite) {
+            const sp = ghost.addComponent(Sprite);
+            sp.spriteFrame = frame;
+            sp.sizeMode = Sprite.SizeMode.CUSTOM;
+            const ut = ghost.addComponent(UITransform);
+            ut.setAnchorPoint(0.5, 0.5);
+            ut.setContentSize(48, 48);
+        } else {
+            const g = ghost.addComponent(Graphics);
+            g.fillColor = new Color(255, 140, 40, 190);
+            g.circle(0, 0, PLAYER.RADIUS);
+            g.fill();
+        }
+        this._ghosts.push({ node: ghost, life: 0.28 });
+    }
+
+    /** 残影淡出 */
+    private _updateGhosts(dt: number): void {
+        for (let i = this._ghosts.length - 1; i >= 0; i--) {
+            const gh = this._ghosts[i];
+            gh.life -= dt;
+            if (gh.life <= 0) {
+                gh.node.destroy();
+                this._ghosts.splice(i, 1);
+                continue;
+            }
+            const a = Math.floor(255 * (gh.life / 0.28) * 0.7);
+            const sp = gh.node.getComponent(Sprite);
+            if (sp) sp.color = new Color(255, 255, 255, a);
+        }
     }
 
     // ===== 受击 =====
@@ -343,6 +513,10 @@ export class PlayerController extends Component {
             case 'regen': this.regen += 0.5; break;
             case 'pierce': this.pierce++; break;
             case 'pickupRange': this.pickupRange += 30; break;
+            // 冲刺强化（质变级，马里奥式：强化唯一核心动词）
+            case 'dashCooldown': this.dashCooldownMax *= 0.75; break;   // 冲刺冷却 -25%
+            case 'dashDamage': this.dashDamage += 15; break;            // 冲刺伤害 +15
+            case 'dashMulti': this.dashCooldownMax *= 0.6; this.dashDamage += 10; break; // 冲刺大师
         }
     }
 }

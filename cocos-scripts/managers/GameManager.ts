@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -19,6 +19,7 @@ import { Joystick } from '../components/Joystick';
 import { PlayerController, UpgradeChoice } from '../components/PlayerController';
 import { EnemyAI } from '../components/EnemyAI';
 import { EliteAI } from '../components/EliteAI';
+import { BossAI } from '../components/BossAI';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
 import { LevelUpUI } from '../ui/LevelUpUI';
@@ -57,6 +58,7 @@ export class GameManager extends Component {
     // ===== 运行时状态 =====
     state: GameState = GameState.BOOT;
     playTime = 0;
+    mapIndex = 0;                    // 当前世界（0 珊瑚礁 / 1 深海 / 2 海底火山）
     private _levelUpChoices: UpgradeChoice[] = [];
 
     onLoad(): void {
@@ -348,13 +350,16 @@ export class GameManager extends Component {
             // 重置所有系统
             step = 'reset';
             console.log('[Clownfish] startGame @reset');
+            this.mapIndex = 0;
+            this._clearEntities();
             this.worldManager?.reset();
             this.spawnManager?.reset();
             this.playerController?.reset();
 
-            // 生成地形
+            // 生成地形（第一张地图：珊瑚礁）
             step = 'terrain';
             console.log('[Clownfish] startGame @terrain');
+            this.worldManager?.setMap(0);
             this.worldManager?.generateTerrain();
 
             // 放置玩家
@@ -409,7 +414,7 @@ export class GameManager extends Component {
         const parent = canvas ?? this.node;
         let tip = parent.getChildByName('ErrorTip');
         if (!tip) {
-            tip = createLabel(parent, '', 0, -300, 22, new Color(255, 90, 90, 255));
+            tip = createLabel(parent, '', 0, -300, 22, new Color(255, 90, 90, 255)).node;
             tip.name = 'ErrorTip';
             tip.setPosition(0, -300, 0);
         }
@@ -478,6 +483,62 @@ export class GameManager extends Component {
         this.spawnManager?.onEliteKilled(elite);
         this.audioManager?.explosion();
         this.cameraFollow?.addShake(10);
+    }
+
+    onBossKilled(boss: BossAI): void {
+        this.audioManager?.explosion();
+        this.cameraFollow?.addShake(14);
+        this.spawnManager?.onBossKilled(boss); // 掉落
+        const map = MAPS[this.mapIndex % MAPS.length];
+        if (this.mapIndex >= MAPS.length - 1) {
+            // 最终世界 BOSS 击杀 = 通关
+            this._victory();
+        } else {
+            this.notify(`💠 ${map.bossName} 被击败！传送门已开启，游进去进入下一世界`);
+            this.spawnManager?.spawnPortal(boss.node.position.x, boss.node.position.y);
+        }
+    }
+
+    /** 推进到下一张地图（玩家接触传送门触发） */
+    advanceMap(): void {
+        this.mapIndex++;
+        if (this.mapIndex >= MAPS.length) {
+            this._victory();
+            return;
+        }
+        const map = MAPS[this.mapIndex];
+        this._clearEntities();
+        this.worldManager?.reset();
+        this.worldManager?.setMap(this.mapIndex);
+        this.worldManager?.generateTerrain();
+        this.spawnManager?.resetForNewMap();
+        this.playerController?.placeAtStart();
+        this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
+        this.notify(`🌊 进入 ${map.name}（${map.subtitle}）`);
+    }
+
+    /** 通关结算（击败全部三个世界的 BOSS） */
+    private _victory(): void {
+        if (this.state !== GameState.PLAYING) return;
+        this.state = GameState.GAMEOVER;
+        this.audioManager?.gameover();
+        this._showUI('gameover');
+        this.node.emit('show-gameover', {
+            time: this.playTime,
+            kills: this.spawnManager?.kills || 0,
+            wave: this.spawnManager?.wave || 1,
+            level: this.playerController?.level || 1,
+            victory: true,
+        });
+    }
+
+    /** 清空场上实体（敌人/子弹/拾取物/传送门/残影） */
+    private _clearEntities(): void {
+        if (!this.entityManager) return;
+        const children = this.entityManager.children.slice();
+        for (const child of children) {
+            child.destroy();
+        }
     }
 
     // ===== 通知 =====
@@ -582,6 +643,10 @@ export class GameManager extends Component {
             { id: 'regen', name: '生命恢复', desc: '每秒回血 +0.5', icon: '💚' },
             { id: 'pierce', name: '穿透弹', desc: '子弹穿透 +1', icon: '🗡' },
             { id: 'pickupRange', name: '磁铁强化', desc: '拾取范围 +30', icon: '🧲' },
+            // 冲刺强化（质变级，马里奥式：强化唯一核心动词）
+            { id: 'dashCooldown', name: '疾风冲刺', desc: '冲刺冷却 -25%', icon: '💨' },
+            { id: 'dashDamage', name: '雷霆冲刺', desc: '冲刺伤害 +15', icon: '⚡' },
+            { id: 'dashMulti', name: '冲刺大师', desc: '冲刺冷却 -40% 且伤害 +10', icon: '🌀' },
         ];
 
         // 随机选 3 个

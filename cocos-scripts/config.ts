@@ -48,7 +48,7 @@ export const ENEMY = {
     CONTACT_DAMAGE: 10,
     DMG_GROWTH: 0.045,        // 每波伤害成长 +4.5%
     DMG_MAX_MULT: 3.0,        // 伤害封顶（基础×3）
-    XP_VALUE: 3,              // 击杀经验宝石数
+    XP_VALUE: 3,              // 击杀经验值
     XP_GROWTH: 0.5,           // 每波经验增量（后期升级不掉队）
     SPAWN_INTERVAL: 0.9,      // 初始生成间隔(秒)
     SPAWN_INTERVAL_MIN: 0.26, // 生成间隔下限
@@ -175,4 +175,100 @@ export enum GameState {
 export const UI_CONFIG = {
     SAFE_PAD: 10,             // HUD安全边距
     DEBUG: false,             // 运行时由 GameManager 根据查询参数设置
+};
+
+// ===== 升级曲线（马里奥式：前几级快、逐级明显变慢；参考成熟游戏拉长节奏） =====
+// expNeed(level) = BASE + GROWTH * level^POWER
+// 校准（tools/level_sim.py，900s 一局）：首级≈14s、L5≈90s、L10≈6min、一局约 13-15 级
+export const LEVELING = {
+    BASE: 30,
+    GROWTH: 15,
+    POWER: 1.5,
+};
+/** 升到下一级所需经验（唯一数据源） */
+export function expNeed(level: number): number {
+    return Math.floor(LEVELING.BASE + LEVELING.GROWTH * Math.pow(level, LEVELING.POWER));
+}
+
+// ===== 冲刺技能（主角核心动词，混合流：自动射击打底 + 冲刺高手操作） =====
+export const DASH = {
+    SPEED: 880,               // 冲刺速度(px/s)
+    DURATION: 0.18,           // 冲刺持续时间(秒)
+    COOLDOWN: 2.2,            // 冲刺冷却(秒)
+    DAMAGE: 30,               // 冲刺撞击伤害（穿过敌人）
+    IFRAME: 0.4,              // 冲刺无敌帧(秒)
+    HIT_RADIUS: 48,           // 冲刺撞击判定半径(px)
+    TRAIL_COUNT: 6,           // 残影数量
+};
+
+// ===== 多地图（3 个世界：珊瑚礁→深海→海底火山，每图一个 BOSS，击败开传送门连通） =====
+export interface MapTheme {
+    id: number;
+    name: string;                 // 地图名
+    subtitle: string;             // 世界副标题
+    bossSprite: string;           // BOSS 素材名（assets/resources/sprites/）
+    bossName: string;
+    bossWave: number;             // 第 N 波结束后 BOSS 登场
+    bossHp: number;               // BOSS 血量
+    bossSpeed: number;            // BOSS 移动速度
+    bossDamage: number;           // BOSS 接触伤害
+    bossBurstDamage: number;      // BOSS 环形弹幕伤害
+    tiles: [number, number, number][];   // 地面配色（base + 变体）
+    decals: [number, number, number][]; // 海底装饰配色
+    enemies: number[];            // 该图出现的敌人类型索引（EnemyAI.TYPES）
+    enemyHpMult: number;          // 敌人血量倍率
+}
+
+export const MAPS: MapTheme[] = [
+    {
+        id: 0, name: '珊瑚礁', subtitle: '第一世界 · 浅海', bossSprite: 'boss_crab', bossName: '巨蟹王', bossWave: 5,
+        bossHp: 1200, bossSpeed: 40, bossDamage: 25, bossBurstDamage: 12,
+        tiles: [[18, 70, 96], [22, 82, 112], [14, 60, 84], [28, 92, 124]],
+        decals: [[90, 210, 170], [235, 130, 150], [230, 200, 110], [190, 190, 210], [130, 230, 160]],
+        enemies: [0, 1], enemyHpMult: 1.0,
+    },
+    {
+        id: 1, name: '深海', subtitle: '第二世界 · 幽暗', bossSprite: 'boss_eel', bossName: '巨鳗王', bossWave: 5,
+        bossHp: 2000, bossSpeed: 46, bossDamage: 32, bossBurstDamage: 16,
+        tiles: [[8, 18, 44], [12, 24, 54], [6, 14, 36], [16, 30, 62]],
+        decals: [[90, 180, 240], [140, 110, 220], [60, 200, 200], [110, 130, 230], [70, 160, 220]],
+        enemies: [0, 1, 2, 3], enemyHpMult: 1.5,
+    },
+    {
+        id: 2, name: '海底火山', subtitle: '最终世界 · 深渊', bossSprite: 'boss_angler', bossName: '安康鱼王', bossWave: 6,
+        bossHp: 3200, bossSpeed: 52, bossDamage: 40, bossBurstDamage: 20,
+        tiles: [[40, 26, 22], [50, 34, 26], [32, 20, 18], [58, 42, 30]],
+        decals: [[255, 120, 60], [240, 180, 60], [255, 90, 90], [200, 130, 60], [255, 160, 80]],
+        enemies: [0, 1, 2, 3, 4], enemyHpMult: 2.2,
+    },
+];
+
+// ===== BOSS（每图末尾的大 BOSS：追逐 + 周期性环形弹幕） =====
+export const BOSS = {
+    RADIUS: 55,
+    SPEED: 40,                  // 兜底速度（实际用 MAPS[].bossSpeed）
+    CONTACT_DAMAGE: 25,         // 兜底接触伤害（实际用 MAPS[].bossDamage）
+    BURST_INTERVAL: 3.5,        // 环形弹幕间隔(秒)
+    BURST_COUNT: 36,            // 环形弹幕子弹数
+    BURST_SPEED: 200,
+    BURST_RANGE: 700,           // 弹幕射程(px)
+    XP_VALUE: 100,
+};
+
+// ===== 精灵素材映射（assets/resources/sprites/*.png，无扩展名） =====
+export const SPRITES = {
+    PLAYER: 'sprites/player_clownfish',
+    ENEMIES: [
+        'sprites/enemy_jellyfish',
+        'sprites/enemy_crab',
+        'sprites/enemy_eel',
+        'sprites/enemy_puffer',
+        'sprites/enemy_angler',
+    ],
+    BOSSES: [
+        'sprites/boss_crab',
+        'sprites/boss_eel',
+        'sprites/boss_angler',
+    ],
+    PORTAL: 'sprites/portal',
 };

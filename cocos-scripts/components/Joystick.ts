@@ -11,6 +11,7 @@ const { ccclass, property } = _decorator;
 const JOY_RADIUS = 52;
 const JOY_KNOB = 24;
 const DEAD_ZONE = 0.18;
+const DASH_BTN_R = 52; // 冲刺按钮半径（触屏，微信小游戏无键盘）
 
 interface JoystickState {
     pointerId: number;
@@ -54,6 +55,13 @@ export class Joystick extends Component {
     private _hintRY = 0;
     private _hintsOn = false;
 
+    // ===== 冲刺按钮（触屏专用，微信小游戏无键盘） =====
+    private _dashBtn: Node | null = null;
+    private _dashBtnX = 0;   // 本地坐标（屏幕中心为原点，用于绘制）
+    private _dashBtnY = 0;
+    private _dashBtnRX = 0;  // 屏幕坐标（左下原点，用于命中检测）
+    private _dashBtnRY = 0;
+
     /** 状态机引用（由 GameManager 注入），非 PLAYING 状态忽略触摸避免拦截 UI 点击 */
     gameManager: GameManager | null = null;
 
@@ -80,6 +88,24 @@ export class Joystick extends Component {
         // 提示文字节点（初始隐藏）
         this._hintL = this._createHint('左侧滑动 · 移动', -380, -260);
         this._hintR = this._createHint('右侧滑动 · 瞄准', 380, -260);
+
+        // 冲刺按钮（触屏专用）
+        this._dashBtn = this._createDashButton();
+    }
+
+    /** 创建冲刺按钮文字节点（初始隐藏，由 update 按状态显示） */
+    private _createDashButton(): Node {
+        const n = new Node('DashBtn');
+        n.layer = Layers.Enum.UI_2D;
+        n.setParent(this.node);
+        const label = n.addComponent(Label);
+        label.string = '⚡ 冲刺';
+        label.fontSize = 22;
+        label.lineHeight = 28;
+        label.color = new Color(255, 235, 140, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        n.addComponent(UIOpacity).opacity = 0;
+        return n;
     }
 
     /** 创建淡显提示文字节点 */
@@ -133,6 +159,15 @@ export class Joystick extends Component {
         const touch = e.touch;
         if (!touch) return;
         const loc = touch.getLocation();
+        // 冲刺按钮命中（触屏；鼠标点击同样命中）——优先于摇杆
+        const dbx = this._dashBtnRX, dby = this._dashBtnRY;
+        if (dbx > 0) {
+            const ddx = loc.x - dbx, ddy = loc.y - dby;
+            if (ddx * ddx + ddy * ddy < DASH_BTN_R * DASH_BTN_R) {
+                this.gameManager?.playerController?.tryDash();
+                return;
+            }
+        }
         // 屏幕坐标（左下原点）→ 节点本地坐标（Graphics 绘制空间）
         const lp = this._toLocal(loc.x, loc.y);
         const vw = view.getVisibleSize().width;
@@ -258,7 +293,7 @@ export class Joystick extends Component {
         return this._joyMove.active || this._joyAim.active;
     }
 
-    /** 绘制摇杆（叠加在游戏画面之上） */
+    /** 绘制摇杆 + 冲刺按钮（叠加在游戏画面之上） */
     update(dt: number): void {
         if (!this._gfx) return;
         const g = this._gfx;
@@ -266,6 +301,39 @@ export class Joystick extends Component {
         if (this._joyMove.active) this._drawJoystick(g, this._joyMove);
         if (this._joyAim.active) this._drawJoystick(g, this._joyAim);
         this._updateHints(g, dt);
+        this._updateDashButton(g);
+    }
+
+    /** 绘制冲刺按钮：就绪金色亮圈，冷却中灰圈 + 显示剩余秒数 */
+    private _updateDashButton(g: Graphics): void {
+        const playing = this.gameManager && this.gameManager.state === GameState.PLAYING;
+        if (!playing) {
+            if (this._dashBtn) this._dashBtn.getComponent(UIOpacity)!.opacity = 0;
+            return;
+        }
+        const vs = view.getVisibleSize();
+        this._dashBtnRX = vs.width - 100;    // 屏幕坐标（左下原点）
+        this._dashBtnRY = vs.height - 100;
+        this._dashBtnX = vs.width / 2 - 100; // 本地坐标（中心原点）
+        this._dashBtnY = vs.height / 2 - 100;
+
+        const cd = this.gameManager?.playerController?.dashCooldown ?? 0;
+        const ready = cd <= 0;
+        g.fillColor = ready ? new Color(255, 200, 80, 150) : new Color(90, 100, 120, 110);
+        g.circle(this._dashBtnX, this._dashBtnY, DASH_BTN_R);
+        g.fill();
+        g.lineWidth = 4;
+        g.strokeColor = ready ? new Color(255, 230, 130, 230) : new Color(140, 150, 170, 170);
+        g.circle(this._dashBtnX, this._dashBtnY, DASH_BTN_R);
+        g.stroke();
+
+        if (this._dashBtn) {
+            this._dashBtn.setPosition(this._dashBtnX, this._dashBtnY, 0);
+            const op = this._dashBtn.getComponent(UIOpacity)!;
+            op.opacity = ready ? 255 : 150;
+            const lbl = this._dashBtn.getComponent(Label)!;
+            lbl.string = ready ? '⚡ 冲刺' : cd.toFixed(1) + 's';
+        }
     }
 
     /** 提示淡出逻辑 + 淡显摇杆底圈 */

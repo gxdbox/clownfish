@@ -240,4 +240,5 @@ export class AudioManager extends Component {
     gameover(): void { this.play('gameover', this.gameoverClip); }
     spikeHit(): void { this.play('spikeHit', this.spikeHitClip, 0.12); }
     click(): void { this.play('click', this.clickClip, 0.04); }
+    dash(): void { this.play('shoot', this.shootClip, 0.02); }
 }

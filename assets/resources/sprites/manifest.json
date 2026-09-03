@@ -1,0 +1,52 @@
+{
+  "enemy_jellyfish": {
+    "file": "enemy_jellyfish.png",
+    "bytes": 150883,
+    "rgba": true
+  },
+  "enemy_crab": {
+    "file": "enemy_crab.png",
+    "bytes": 170911,
+    "rgba": true
+  },
+  "enemy_eel": {
+    "file": "enemy_eel.png",
+    "bytes": 156039,
+    "rgba": true
+  },
+  "enemy_puffer": {
+    "file": "enemy_puffer.png",
+    "bytes": 210894,
+    "rgba": true
+  },
+  "enemy_angler": {
+    "file": "enemy_angler.png",
+    "bytes": 159939,
+    "rgba": true
+  },
+  "player_clownfish": {
+    "file": "player_clownfish.png",
+    "bytes": 176109,
+    "rgba": true
+  },
+  "boss_crab": {
+    "file": "boss_crab.png",
+    "bytes": 233834,
+    "rgba": true
+  },
+  "boss_eel": {
+    "file": "boss_eel.png",
+    "bytes": 294022,
+    "rgba": true
+  },
+  "boss_angler": {
+    "file": "boss_angler.png",
+    "bytes": 295177,
+    "rgba": true
+  },
+  "portal": {
+    "file": "portal.png",
+    "bytes": 377292,
+    "rgba": true
+  }
+}

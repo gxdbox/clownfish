@@ -6,23 +6,10 @@
  */
 import { _decorator, Component, Graphics, Color } from 'cc';
 import { clamp, rand, dist2, rectOverlap } from '../util';
-import { WORLD, PLAYER, TERRAIN, RENDER } from '../config';
+import { WORLD, PLAYER, TERRAIN, RENDER, MAPS } from '../config';
 const { ccclass, property } = _decorator;
 
-// ===== 地形渲染配色（海底风格） =====
-const TILE_COLORS = [
-    new Color(16, 40, 74, 255),   // 基础瓦片
-    new Color(20, 48, 86, 255),   // 变体1
-    new Color(13, 34, 64, 255),   // 变体2
-    new Color(24, 52, 92, 255),   // 变体3
-];
-const DECAL_COLORS = [
-    new Color(80, 190, 170, 255), // 海草
-    new Color(230, 130, 150, 255), // 珊瑚枝
-    new Color(220, 200, 120, 255), // 海星
-    new Color(180, 180, 200, 255), // 贝壳
-    new Color(120, 220, 160, 255), // 海草亮色
-];
+// ===== 地形渲染配色（由 config.MAPS 按地图提供） =====
 const WALL_COLOR = new Color(74, 84, 100, 255);
 const WALL_EDGE_COLOR = new Color(100, 112, 130, 255);
 const CORAL_COLOR = new Color(214, 106, 140, 255);
@@ -89,6 +76,9 @@ export class WorldManager extends Component {
     // ===== 地形渲染 =====
     private _gfx: Graphics | null = null;
 
+    /** 当前地图索引（决定地形配色，0 珊瑚礁 / 1 深海 / 2 海底火山） */
+    mapIndex = 0;
+
     onLoad(): void {
         // 自动挂载 Graphics 组件（用于绘制地形，无需预制体）
         this._gfx = this.node.getComponent(Graphics) || this.node.addComponent(Graphics);
@@ -98,6 +88,11 @@ export class WorldManager extends Component {
     terrain: TerrainData = {
         walls: [], spikes: [], boulders: [], corals: [], urchins: [], decals: []
     };
+
+    /** 切换地图（重设地图索引；地形数据与绘制由 generateTerrain 重建） */
+    setMap(mapIndex: number): void {
+        this.mapIndex = mapIndex % MAPS.length;
+    }
 
     /** 网格查询去重标记（每帧递增） */
     qTick = 0;
@@ -247,8 +242,13 @@ export class WorldManager extends Component {
         const t = RENDER.TILE_SIZE;
         const T = TERRAIN;
 
+        // 地图主题配色（来自 config.MAPS）
+        const map = MAPS[this.mapIndex % MAPS.length];
+        const tileCols = map.tiles.map(([r, gg, b]) => new Color(r, gg, b, 255));
+        const decalCols = map.decals.map(([r, gg, b]) => new Color(r, gg, b, 255));
+
         // 地面底色（深蓝海底，世界边界外为场景背景色 = 虚空）
-        g.fillColor = TILE_COLORS[0];
+        g.fillColor = tileCols[0];
         g.rect(0, 0, s, s);
         g.fill();
 
@@ -258,7 +258,7 @@ export class WorldManager extends Component {
             for (let tx = 0; tx < s; tx += vt) {
                 const v = tileVariant(tx / vt, ty / vt);
                 if (v === 0) continue;
-                g.fillColor = TILE_COLORS[v % TILE_COLORS.length];
+                g.fillColor = tileCols[v % tileCols.length];
                 g.rect(tx, ty, vt, vt);
                 g.fill();
             }
@@ -266,7 +266,7 @@ export class WorldManager extends Component {
 
         // 海底装饰（纯视觉小圆点）
         for (const d of this.terrain.decals) {
-            g.fillColor = DECAL_COLORS[d.type % DECAL_COLORS.length];
+            g.fillColor = decalCols[d.type % decalCols.length];
             g.circle(d.x, d.y, 2.5 + (d.type % 3));
             g.fill();
         }

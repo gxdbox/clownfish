@@ -234,6 +234,8 @@ export class EliteAI extends Component {
         if (!this._active) return;
         this._active = false;
         this.node.active = false;
+        // 销毁而非仅停用：避免死节点占内存导致内存泄漏闪退
+        this.node.destroy();
         // 死亡爆发：向四周喷射 BURST_COUNT 发敌弹（README 规格）
         this._burstBullets();
         this.gameManager?.onEliteKilled(this);

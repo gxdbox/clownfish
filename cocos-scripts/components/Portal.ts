@@ -71,6 +71,8 @@ export class Portal extends Component {
         const pos = this.node.position;
         if (dist2(pos.x, pos.y, ppos.x, ppos.y) < PORTAL_RADIUS * PORTAL_RADIUS) {
             this._active = false;
+            // 销毁而非仅停用：传送门用后即弃，避免死节点占内存
+            this.node.destroy();
             this.gameManager?.advanceMap();
         }
     }

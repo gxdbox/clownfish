@@ -142,6 +142,8 @@ export class Bullet extends Component {
     private _deactivate(): void {
         this._active = false;
         this.node.active = false;
+        // 销毁而非仅停用：否则节点+组件+Graphics 命令缓冲+精灵引用永久驻留 → 内存泄漏闪退
+        this.node.destroy();
     }
 
     /** 回收子弹（由对象池调用） */

@@ -176,6 +176,8 @@ export class Pickup extends Component {
     private _deactivate(): void {
         this._active = false;
         this.node.active = false;
+        // 销毁而非仅停用：否则大量拾取物死节点占内存 → 内存泄漏闪退
+        this.node.destroy();
     }
 
     /** 回收（由对象池调用） */

@@ -180,6 +180,8 @@ export class BossAI extends Component {
         if (!this._active) return;
         this._active = false;
         this.node.active = false;
+        // 销毁而非仅停用：避免死节点占内存导致内存泄漏闪退
+        this.node.destroy();
         this.gameManager?.onBossKilled(this);
     }
 

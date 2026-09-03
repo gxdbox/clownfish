@@ -6,7 +6,7 @@
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
-import { BOSS, WORLD, GameState, SPRITES, MAPS } from '../config';
+import { BOSS, WORLD, GameState, SPRITES, MAPS, PLAYER } from '../config';
 import { ensureRenderTransform, loadSpriteOnto } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -119,6 +119,13 @@ export class BossAI extends Component {
         const ny = pos.y + Math.sin(a) * this.speed * dt;
         const resolved = this.worldManager!.moveResolve(nx, ny, BOSS.RADIUS);
         this.node.setPosition(resolved[0], resolved[1], pos.z);
+
+        // 接触伤害：撞到玩家立即扣血（damagePlayer 内部有 invincible 无敌帧节流）
+        const r = BOSS.RADIUS + PLAYER.RADIUS;
+        const dx = resolved[0] - ppos.x, dy = resolved[1] - ppos.y;
+        if (dx * dx + dy * dy < r * r) {
+            this.player.damagePlayer(this.damage, resolved[0], resolved[1]);
+        }
 
         // 周期性环形弹幕
         this.burstTimer -= dt;

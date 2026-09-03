@@ -4,7 +4,7 @@
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
-import { ENEMY, WORLD, GameState, SPRITES } from '../config';
+import { ENEMY, WORLD, GameState, SPRITES, PLAYER } from '../config';
 import { ensureRenderTransform, loadSpriteOnto } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -144,6 +144,13 @@ export class EnemyAI extends Component {
         const wm = this.worldManager!;
         const resolved = wm.moveResolve(nx, ny, TYPES[this.type].r);
         this.node.setPosition(resolved[0], resolved[1], pos.z);
+
+        // 接触伤害：撞到玩家立即扣血（damagePlayer 内部有 invincible 无敌帧节流，不会每帧重复扣血）
+        const r = TYPES[this.type].r + PLAYER.RADIUS;
+        const dx = resolved[0] - ppos.x, dy = resolved[1] - ppos.y;
+        if (dx * dx + dy * dy < r * r) {
+            this.player.damagePlayer(this.damage, resolved[0], resolved[1]);
+        }
     }
 
     /** 受击（子弹命中） */

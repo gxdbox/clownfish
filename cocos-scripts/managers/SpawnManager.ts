@@ -169,7 +169,12 @@ export class SpawnManager extends Component {
     private _spawnElite(): void {
         if (!this._entityManager || !this._player) return;
 
-        const pos = this._getSpawnPos();
+        // 精英生成距离更近：普通怪 SPAWN_DIST=720 在视野外 + 精英移速慢(52) → 提示了却长时间看不见。
+        // 用视野较小半轴的 ~1.1 倍，保证生成后立即进入玩家视野。
+        const vw = view.getVisibleSize().width;
+        const vh = view.getVisibleSize().height;
+        const dist = Math.min(vw, vh) / 2 + ENEMY.SPAWN_OFFSET;
+        const pos = this._getSpawnPos(dist);
         this.eliteCount++;
 
         const node = this._createEntityNode(this.elitePrefab, 'Elite');
@@ -184,6 +189,7 @@ export class SpawnManager extends Component {
             ai.init(pos.x, pos.y, this.eliteCount);
         }
 
+        console.log(`[Clownfish] 精英生成 #${this.eliteCount} @(${pos.x.toFixed(0)}, ${pos.y.toFixed(0)}) 距玩家 ${dist.toFixed(0)}px`);
         this.gameManager?.notify(' 精英敌人来袭！');
     }
 
@@ -244,24 +250,16 @@ export class SpawnManager extends Component {
         return n;
     }
 
-    /** 获取屏幕边缘外的生成位置 */
-    private _getSpawnPos(): { x: number; y: number } {
+    /** 获取玩家周围指定距离的生成位置（默认普通怪距离） */
+    private _getSpawnPos(dist = ENEMY.SPAWN_DIST): { x: number; y: number } {
         const ppos = this._player!.node.position;
-        const vw = view.getVisibleSize().width;
-        const vh = view.getVisibleSize().height;
-        const halfW = vw / 2 + ENEMY.SPAWN_OFFSET;
-        const halfH = vh / 2 + ENEMY.SPAWN_OFFSET;
-
         // 随机方向
         const angle = Math.random() * Math.PI * 2;
-        const dist = ENEMY.SPAWN_DIST;
         let x = ppos.x + Math.cos(angle) * dist;
         let y = ppos.y + Math.sin(angle) * dist;
-
         // 约束在世界内
         x = clamp(x, 60, WORLD.SIZE - 60);
         y = clamp(y, 60, WORLD.SIZE - 60);
-
         return { x, y };
     }
 

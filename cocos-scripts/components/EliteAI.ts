@@ -5,8 +5,8 @@
  * 死亡：圆形爆发 24 发敌弹 + 必掉大血球（掉落由 SpawnManager 处理）
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
-import { ELITE, WORLD, GameState } from '../config';
+import { _decorator, Component, Node, Graphics, Color } from 'cc';
+import { ELITE, WORLD, GameState, PLAYER } from '../config';
 import { ensureRenderTransform } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -50,7 +50,10 @@ export class EliteAI extends Component {
     private _gfx: Graphics | null = null;
 
     onLoad(): void {
-        this._gfx = this.node.getComponent(Graphics);
+        // 激光 Graphics 必须挂在精英节点自身；若无（Graphics 在 Body 子节点上），
+        // _drawLaser 会拿到 null 直接跳过 → 激光永不绘制、精英毫无可见反馈。
+        ensureRenderTransform(this.node, ELITE.RADIUS * 2 + 8, ELITE.RADIUS * 2 + 8);
+        this._gfx = this.node.getComponent(Graphics) ?? this.node.addComponent(Graphics);
     }
 
     /** 初始化精英（由 SpawnManager 调用） */
@@ -119,6 +122,13 @@ export class EliteAI extends Component {
         const ny = pos.y + Math.sin(a) * this.speed * dt;
         const resolved = this.worldManager!.moveResolve(nx, ny, ELITE.RADIUS);
         this.node.setPosition(resolved[0], resolved[1], pos.z);
+
+        // 接触伤害：撞到玩家立即扣血（damagePlayer 内部有 invincible 无敌帧节流）
+        const r = ELITE.RADIUS + PLAYER.RADIUS;
+        const dx = resolved[0] - ppos.x, dy = resolved[1] - ppos.y;
+        if (dx * dx + dy * dy < r * r) {
+            this.player.damagePlayer(this.damage, resolved[0], resolved[1]);
+        }
 
         this.laserTimer -= dt;
         if (this.laserTimer <= 0) {
@@ -262,11 +272,8 @@ export class EliteAI extends Component {
         this.audioManager?.burst();
     }
 
-    /** 精英身体视觉兜底（无 Sprite 素材时用 Graphics 绘制，激光用自身 Graphics 不受影响） */
+    /** 精英身体视觉兜底：Body 子节点 Graphics 一定绘制（无 Sprite 素材/无预制体时保证可见；激光用自身 Graphics 不受影响） */
     private _ensureVisual(): void {
-        // Sprite 可能被 Cocos treeshake 成 undefined，需安全检查
-        const SpriteCtor = Sprite;
-        if (!SpriteCtor || this.node.getComponent(Sprite)) return;
         let body = this.node.getChildByName('Body');
         if (!body) {
             body = new Node('Body');
@@ -286,6 +293,8 @@ export class EliteAI extends Component {
         g.fillColor = new Color(255, 80, 120, 255);
         g.circle(4, 4, ELITE.RADIUS * 0.24);
         g.fill();
+        // 强制刷新 Graphics（web-mobile 环境需要，同 PlayerController 兜底）
+        try { g.flush && g.flush(); } catch {}
     }
 
     recycle(): void {

@@ -57,10 +57,8 @@ export class Joystick extends Component {
 
     // ===== 冲刺按钮（触屏专用，微信小游戏无键盘） =====
     private _dashBtn: Node | null = null;
-    private _dashBtnX = 0;   // 本地坐标（屏幕中心为原点，用于绘制）
+    private _dashBtnX = 0;   // 本地坐标（屏幕中心为原点，用于绘制与命中检测）
     private _dashBtnY = 0;
-    private _dashBtnRX = 0;  // 屏幕坐标（左下原点，用于命中检测）
-    private _dashBtnRY = 0;
 
     /** 状态机引用（由 GameManager 注入），非 PLAYING 状态忽略触摸避免拦截 UI 点击 */
     gameManager: GameManager | null = null;
@@ -160,9 +158,11 @@ export class Joystick extends Component {
         if (!touch) return;
         const loc = touch.getLocation();
         // 冲刺按钮命中（触屏；鼠标点击同样命中）——优先于摇杆
-        const dbx = this._dashBtnRX, dby = this._dashBtnRY;
-        if (dbx > 0) {
-            const ddx = loc.x - dbx, ddy = loc.y - dby;
+        // 命中检测必须与绘制用同一坐标系（节点本地坐标，中心原点）：
+        // touch.getLocation() 是屏幕坐标（左下原点且随画布缩放），直接与绘制坐标比较永远不匹配。
+        if (this._dashBtnX > 0) {
+            const lp = this._toLocal(loc.x, loc.y);
+            const ddx = lp.x - this._dashBtnX, ddy = lp.y - this._dashBtnY;
             if (ddx * ddx + ddy * ddy < DASH_BTN_R * DASH_BTN_R) {
                 this.gameManager?.playerController?.tryDash();
                 return;
@@ -312,9 +312,8 @@ export class Joystick extends Component {
             return;
         }
         const vs = view.getVisibleSize();
-        this._dashBtnRX = vs.width - 100;    // 屏幕坐标（左下原点）
-        this._dashBtnRY = vs.height - 100;
-        this._dashBtnX = vs.width / 2 - 100; // 本地坐标（中心原点）
+        // 本地坐标（中心原点），与命中检测一致
+        this._dashBtnX = vs.width / 2 - 100;
         this._dashBtnY = vs.height / 2 - 100;
 
         const cd = this.gameManager?.playerController?.dashCooldown ?? 0;

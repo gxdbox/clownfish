@@ -2,7 +2,7 @@
  * util.ts — 通用工具函数（无分配优先）
  * Cocos Creator 3.8.8 迁移版
  */
-import { Color, Graphics, Label, Node, UITransform, Layers, Sprite, SpriteFrame, resources } from 'cc';
+import { Color, Graphics, Label, Node, UITransform, Layers, Sprite, SpriteFrame, Texture2D, resources } from 'cc';
 
 /** 限制值在 [min, max] 范围内 */
 export function clamp(v: number, min: number, max: number): number {
@@ -99,7 +99,7 @@ export function ensureRenderTransform(node: Node, w = 64, h = 64): UITransform {
 /**
  * 从 resources 加载图片素材并挂到 host 节点的 'Sprite' 子节点上。
  * - path 形如 'sprites/enemy_crab'（不带扩展名、不带 resources/ 前缀）
- * - 加载成功：设置 spriteFrame + 隐藏 host 的 'Body' 子节点（Graphics 兜底）
+ * - 加载成功：构造 SpriteFrame（从 Texture2D 运行时创建，兼容 texture 类型导入的图片）+ 隐藏 host 的 'Body' 子节点（Graphics 兜底）
  * - 加载失败：什么都不做，Graphics 兜底保持可见（零素材仍可玩）
  * - 返回 Sprite 组件（可能为 null，若 Sprite 被 treeshake）
  */
@@ -117,8 +117,12 @@ export function loadSpriteOnto(host: Node, path: string, w: number, h: number): 
     tf.setAnchorPoint(0.5, 0.5);
     tf.setContentSize(w, h);
     sNode.active = false; // 加载完成前隐藏，避免空 Sprite 占位
-    resources.load(path + '/spriteFrame', SpriteFrame, (err, sf) => {
-        if (err || !sf || !host || !host.isValid) return;
+    // 加载 Texture2D → 运行时构造 SpriteFrame。
+    // 仓库 meta 以 texture 类型导入图片：主资源是 cc.ImageAsset，Texture2D 是其 '/texture' 子资源。
+    resources.load(path + '/texture', Texture2D, (err, tex) => {
+        if (err || !tex || !host || !host.isValid) return;
+        const sf = new SpriteFrame();
+        sf.texture = tex;
         sprite.spriteFrame = sf;
         sNode.active = true;
         const body = host.getChildByName('Body');

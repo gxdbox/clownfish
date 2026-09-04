@@ -58,6 +58,7 @@ export class PlayerController extends Component {
     regen = PLAYER.REGEN_PER_SEC;
     fireTimer = 0;
     invincible = 0;
+    hitFlash = 0;             // 受击闪红剩余时间（秒），>0 时给玩家上色
     shield = 0;
     boostTimer = 0;
     boostMult = 1;
@@ -147,6 +148,7 @@ export class PlayerController extends Component {
         this.regen = PLAYER.REGEN_PER_SEC;
         this.fireTimer = 0;
         this.invincible = 0;
+        this.hitFlash = 0;
         this.shield = 0;
         this.boostTimer = 0;
         this.boostMult = 1;
@@ -178,6 +180,8 @@ export class PlayerController extends Component {
         if (this.dead) return;
         // 仅 PLAYING 状态运行（引擎自动调用本方法，需自行判断状态）
         if (this.gameManager?.state !== GameState.PLAYING) return;
+        if (this.hitFlash > 0) this.hitFlash -= dt;
+        this._applyHitFlash();
         this._updateTimers(dt);
         this._updateGhosts(dt);
         this._updateRegen(dt);
@@ -431,6 +435,18 @@ export class PlayerController extends Component {
     }
 
     // ===== 受击 =====
+    /** 受击闪红：hitFlash 计时内给玩家 Sprite（或 Body Graphics 兜底）上色，恢复原色 */
+    private _applyHitFlash(): void {
+        const flash = this.hitFlash > 0;
+        const col = flash ? new Color(255, 90, 90, 255) : new Color(255, 255, 255, 255);
+        const spNode = this.node.getChildByName('Sprite');
+        const sp = spNode && spNode.active ? spNode.getComponent(Sprite) : null;
+        if (sp) sp.color = col;
+        const body = this.node.getChildByName('Body');
+        const g = body && body.active ? (body.getComponent(Graphics) as any) : null;
+        if (g && g.color !== undefined) g.color = col; // Graphics.color 不存在时跳过（兜底场景）
+    }
+
     damagePlayer(amount: number, srcX: number, srcY: number): void {
         if (this.dead || this.invincible > 0) return;
 
@@ -444,6 +460,7 @@ export class PlayerController extends Component {
 
         this.hp -= amount;
         this.invincible = PLAYER.INVINCIBLE_TIME;
+        this.hitFlash = 0.12; // 受击闪红 0.12s，让玩家明确感知"被打到了"
 
         // 击退
         const a = Math.atan2(this.node.position.y - srcY, this.node.position.x - srcX);

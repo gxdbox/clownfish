@@ -5,9 +5,9 @@
  * 死亡：圆形爆发 24 发敌弹 + 必掉大血球（掉落由 SpawnManager 处理）
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Node, Graphics, Color } from 'cc';
-import { ELITE, WORLD, GameState, PLAYER } from '../config';
-import { ensureRenderTransform } from '../util';
+import { _decorator, Component, Node, Graphics, Color, Vec3, UITransform, Sprite } from 'cc';
+import { ELITE, WORLD, GameState, PLAYER, SPRITES } from '../config';
+import { ensureRenderTransform, loadSpriteOnto } from '../util';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -85,6 +85,7 @@ export class EliteAI extends Component {
         if (this.gameManager?.state !== GameState.PLAYING) return;
 
         if (this.hitFlash > 0) this.hitFlash -= dt;
+        this._applyHitFlash();
 
         // 击退衰减
         if (this.knockX !== 0 || this.knockY !== 0) {
@@ -178,44 +179,61 @@ export class EliteAI extends Component {
         }
     }
 
-    /** 绘制激光（预警线 + 光束） */
+    /** 绘制激光（预警线 + 光束）。Graphics 挂在精英节点自身 → 画在节点本地坐标系：
+     * 起点 = (0,0)（即节点位置），终点 = 光束世界末端换算到本地（自动抵消节点旋转/缩放）。
+     * 旧实现误把世界坐标当本地坐标画，激光被画到几千像素外的虚空 → 永远不可见。 */
     private _drawLaser(): void {
         if (!this._gfx) return;
         const g = this._gfx;
         g.clear();
-
-        const pos = this.node.position;
 
         if (this.laserState === 'windup') {
             // 预警线（红色闪烁）
             const alpha = 0.35 + 0.3 * Math.sin(Date.now() / 60);
             g.strokeColor = new Color(255, 60, 80, Math.floor(alpha * 255));
             g.lineWidth = 4;
-            g.moveTo(pos.x, pos.y);
-            g.lineTo(
-                pos.x + Math.cos(this.laserAngle) * ELITE.LASER_MAX_RANGE,
-                pos.y + Math.sin(this.laserAngle) * ELITE.LASER_MAX_RANGE
-            );
-            g.stroke();
+            this._strokeBeam(g, this.laserAngle, ELITE.LASER_MAX_RANGE);
         } else if (this.laserState === 'firing') {
-            // 光束（渐变效果用两段绘制）
-            const ex = pos.x + Math.cos(this.laserAngle) * ELITE.LASER_MAX_RANGE;
-            const ey = pos.y + Math.sin(this.laserAngle) * ELITE.LASER_MAX_RANGE;
-
-            // 外层红色
+            // 光束外层（红色）
             g.strokeColor = new Color(255, 80, 60, 230);
             g.lineWidth = ELITE.LASER_WIDTH;
-            g.moveTo(pos.x, pos.y);
-            g.lineTo(ex, ey);
-            g.stroke();
-
-            // 内层白色核心
+            this._strokeBeam(g, this.laserAngle, ELITE.LASER_MAX_RANGE);
+            // 光束内层（白色核心）
             g.strokeColor = new Color(255, 255, 255, 204);
             g.lineWidth = 6;
-            g.moveTo(pos.x, pos.y);
-            g.lineTo(ex, ey);
-            g.stroke();
+            this._strokeBeam(g, this.laserAngle, ELITE.LASER_MAX_RANGE);
         }
+    }
+
+    /** 在节点本地坐标系画一条从原点指向世界方向 angle、长 range 的线段（末端自动换算本地坐标） */
+    private _strokeBeam(g: Graphics, angle: number, range: number): void {
+        const pos = this.node.position;
+        const ex = pos.x + Math.cos(angle) * range;
+        const ey = pos.y + Math.sin(angle) * range;
+        let lx = ex - pos.x;
+        let ly = ey - pos.y;
+        const ut = this.node.getComponent(UITransform);
+        if (ut) {
+            // 世界端点 → 节点本地坐标（Graphics 绘制空间），保证激光世界方向与伤害判定一致
+            const lp = ut.convertToNodeSpaceAR(new Vec3(ex, ey, 0));
+            lx = lp.x;
+            ly = lp.y;
+        }
+        g.moveTo(0, 0);
+        g.lineTo(lx, ly);
+        g.stroke();
+    }
+
+    /** 受击闪红：hitFlash 计时内给精灵/Sprite 或 Graphics 上色，恢复原色 */
+    private _applyHitFlash(): void {
+        const flash = this.hitFlash > 0;
+        const col = flash ? new Color(255, 90, 90, 255) : new Color(255, 255, 255, 255);
+        const spNode = this.node.getChildByName('Sprite');
+        const sp = spNode && spNode.active ? spNode.getComponent(Sprite) : null;
+        if (sp) sp.color = col;
+        const body = this.node.getChildByName('Body');
+        const g = body && body.active ? (body.getComponent(Graphics) as any) : null;
+        if (g && g.color !== undefined) g.color = col; // Graphics.color 不存在时跳过（兜底场景）
     }
 
     /** 受击 */
@@ -297,6 +315,9 @@ export class EliteAI extends Component {
         g.fill();
         // 强制刷新 Graphics（web-mobile 环境需要，同 PlayerController 兜底）
         try { g.flush && g.flush(); } catch {}
+        // 2) AI 素材：加载精英精灵图（复用 Boss 素材作精英视觉，区别于普通敌人），
+        //    成功后隐藏上面的 Graphics 兜底（Graphics 在 web-mobile 下可能不渲染 → 精英不可见）
+        loadSpriteOnto(this.node, SPRITES.BOSSES[0], ELITE.RADIUS * 2.4, ELITE.RADIUS * 2.4);
     }
 
     recycle(): void {

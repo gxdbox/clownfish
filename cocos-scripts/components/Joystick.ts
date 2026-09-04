@@ -57,8 +57,9 @@ export class Joystick extends Component {
 
     // ===== 冲刺按钮（触屏专用，微信小游戏无键盘） =====
     private _dashBtn: Node | null = null;
-    private _dashBtnX = 0;   // 本地坐标（屏幕中心为原点，用于绘制与命中检测）
+    private _dashBtnX = 0;   // 本地坐标（节点中心为原点，用于绘制与命中检测）
     private _dashBtnY = 0;
+    private _dashLogged = false; // 一次性坐标诊断日志（辅助定位坐标系问题）
 
     /** 状态机引用（由 GameManager 注入），非 PLAYING 状态忽略触摸避免拦截 UI 点击 */
     gameManager: GameManager | null = null;
@@ -158,12 +159,35 @@ export class Joystick extends Component {
         if (!touch) return;
         const loc = touch.getLocation();
         // 冲刺按钮命中（触屏；鼠标点击同样命中）——优先于摇杆
-        // 命中检测必须与绘制用同一坐标系（节点本地坐标，中心原点）：
-        // touch.getLocation() 是屏幕坐标（左下原点且随画布缩放），直接与绘制坐标比较永远不匹配。
+        // 命中检测必须与绘制用同一坐标系（节点本地坐标，中心原点）。
+        // touch.getLocation() 的坐标系不同平台有歧义（世界坐标=中心原点 / UI坐标=左下原点），
+        // 两种解释都测一遍，保证按钮在任何平台都能命中：
         if (this._dashBtnX > 0) {
-            const lp = this._toLocal(loc.x, loc.y);
-            const ddx = lp.x - this._dashBtnX, ddy = lp.y - this._dashBtnY;
-            if (ddx * ddx + ddy * ddy < DASH_BTN_R * DASH_BTN_R) {
+            const R2 = DASH_BTN_R * DASH_BTN_R;
+            let hit = false;
+            const ut = this.node.getComponent(UITransform);
+            if (ut) {
+                // 解释 A：loc 是节点/世界坐标（中心原点）→ 按钮本地位置换算回世界再比较
+                const wp = ut.convertToWorldSpaceAR(new Vec3(this._dashBtnX, this._dashBtnY, 0));
+                const ddx = loc.x - wp.x, ddy = loc.y - wp.y;
+                if (ddx * ddx + ddy * ddy < R2) hit = true;
+            }
+            if (!hit) {
+                // 解释 B：loc 是 UI/屏幕坐标（左下原点）→ 先减半宽高转节点本地（中心原点）再比较
+                const ut2 = this.node.getComponent(UITransform);
+                const vs = view.getVisibleSize();
+                const w = ut2 ? ut2.contentSize.width : vs.width;
+                const h = ut2 ? ut2.contentSize.height : vs.height;
+                const lx = loc.x - w / 2, ly = loc.y - h / 2;
+                const ddx = lx - this._dashBtnX, ddy = ly - this._dashBtnY;
+                if (ddx * ddx + ddy * ddy < R2) hit = true;
+            }
+            if (hit) {
+                if (!this._dashLogged) {
+                    this._dashLogged = true;
+                    console.log('[Clownfish][dash] 命中 loc=(' + loc.x.toFixed(1) + ',' + loc.y.toFixed(1) +
+                        ') btnLocal=(' + this._dashBtnX.toFixed(0) + ',' + this._dashBtnY.toFixed(0) + ')');
+                }
                 this.gameManager?.playerController?.tryDash();
                 return;
             }
@@ -312,9 +336,14 @@ export class Joystick extends Component {
             return;
         }
         const vs = view.getVisibleSize();
-        // 本地坐标（中心原点），与命中检测一致
-        this._dashBtnX = vs.width / 2 - 100;
-        this._dashBtnY = vs.height / 2 - 100;
+        // 本地坐标（节点中心为原点），与命中检测一致。
+        // 节点 UITransform 才是真实渲染空间（1280x720），view.getVisibleSize() 可能随设计分辨率设置
+        // 与节点空间不一致 → 用节点内容尺寸计算，保证按钮绘制位置与命中检测在同一坐标系。
+        const ut = this.node.getComponent(UITransform);
+        const w = ut ? ut.contentSize.width : vs.width;
+        const h = ut ? ut.contentSize.height : vs.height;
+        this._dashBtnX = w / 2 - 100;
+        this._dashBtnY = h / 2 - 100;
 
         const cd = this.gameManager?.playerController?.dashCooldown ?? 0;
         const ready = cd <= 0;

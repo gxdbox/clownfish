@@ -7,6 +7,7 @@
 import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3, Sprite, SpriteFrame, UITransform } from 'cc';
 import { clamp, ensureRenderTransform, loadSpriteOnto } from '../util';
 import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed } from '../config';
+import { SwimAnim, SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -77,6 +78,7 @@ export class PlayerController extends Component {
     private _ghosts: { node: Node; life: number }[] = [];
 
     private _pos = new Vec3();
+    private _swim = new SwimAnim(); // 程序化游动动画（摆动/浮动/呼吸）
 
     onLoad(): void {
         this.expNext = this._expNeed(1);
@@ -164,6 +166,7 @@ export class PlayerController extends Component {
         for (const gh of this._ghosts) gh.node.destroy();
         this._ghosts = [];
         this.node.setScale(1, 1, 1);
+        this._swim.reset();
     }
 
     /** 放置玩家到起始位置 */
@@ -191,9 +194,17 @@ export class PlayerController extends Component {
         } else {
             this._updateMove(dt);
         }
+        this._applySwim(dt);
     }
 
     // ===== 移动 =====
+    /** 程序化游动动画：只作用于 Sprite 子节点，让静态小丑鱼图"活"起来（摆尾/起伏） */
+    private _applySwim(dt: number): void {
+        const sNode = this.node.getChildByName('Sprite');
+        if (!sNode || !sNode.active) return;
+        this._swim.update(dt, sNode, SWIM.swimmer);
+    }
+
     private _updateMove(dt: number): void {
         if (!this.joystick) return;
         const ix = this.joystick.moveX, iy = this.joystick.moveY;

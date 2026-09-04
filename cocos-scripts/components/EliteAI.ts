@@ -8,6 +8,7 @@
 import { _decorator, Component, Node, Graphics, Color, Vec3, UITransform, Sprite } from 'cc';
 import { ELITE, WORLD, GameState, PLAYER, SPRITES } from '../config';
 import { ensureRenderTransform, loadSpriteOnto } from '../util';
+import { SwimAnim, SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -39,6 +40,7 @@ export class EliteAI extends Component {
     faceAngle = 0;
     isElite = true;
     private _active = true;
+    private _swim = new SwimAnim();
 
     // 激光状态机
     laserState: LaserState = 'idle';
@@ -83,6 +85,8 @@ export class EliteAI extends Component {
         if (!this._active) return;
         // 暂停/结算时冻结（引擎自动调用本方法，需自行判断状态）
         if (this.gameManager?.state !== GameState.PLAYING) return;
+
+        this._applySwim(dt);
 
         if (this.hitFlash > 0) this.hitFlash -= dt;
         this._applyHitFlash();
@@ -236,6 +240,13 @@ export class EliteAI extends Component {
         if (g && g.color !== undefined) g.color = col; // Graphics.color 不存在时跳过（兜底场景）
     }
 
+    /** 程序化"活"动画：只作用于 Sprite 子节点，不影响移动/激光 */
+    private _applySwim(dt: number): void {
+        const sNode = this.node.getChildByName('Sprite');
+        if (!sNode || !sNode.active) return;
+        this._swim.update(dt, sNode, SWIM.boss);
+    }
+
     /** 受击 */
     hurtEnemy(damage: number, bx: number, by: number): void {
         if (!this._active) return;
@@ -318,6 +329,9 @@ export class EliteAI extends Component {
         // 2) AI 素材：加载精英精灵图（复用 Boss 素材作精英视觉，区别于普通敌人），
         //    成功后隐藏上面的 Graphics 兜底（Graphics 在 web-mobile 下可能不渲染 → 精英不可见）
         loadSpriteOnto(this.node, SPRITES.BOSSES[0], ELITE.RADIUS * 2.4, ELITE.RADIUS * 2.4);
+        // 附加发光部位（本精英素材为螃蟹，无灯笼 → attachGlow 内部 no-op）
+        const sNode = this.node.getChildByName('Sprite');
+        if (sNode) this._swim.attachGlow(sNode, SWIM.boss);
     }
 
     recycle(): void {

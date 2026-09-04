@@ -8,6 +8,7 @@
 import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
 import { BOSS, WORLD, GameState, SPRITES, MAPS, PLAYER } from '../config';
 import { ensureRenderTransform, loadSpriteOnto } from '../util';
+import { SwimAnim, SWIM, BOSS_SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -39,6 +40,8 @@ export class BossAI extends Component {
     isBoss = true;
     burstTimer = BOSS.BURST_INTERVAL * 0.6; // 首次弹幕提前一点
     private _active = true;
+    private _swim = new SwimAnim();
+    private _swimType = 'boss';
 
     /** 初始化 Boss（由 SpawnManager 调用） */
     init(x: number, y: number, mapIndex: number): void {
@@ -54,6 +57,7 @@ export class BossAI extends Component {
         this.faceAngle = 0;
         this.burstTimer = BOSS.BURST_INTERVAL * 0.6;
         this._active = true;
+        this._swimType = BOSS_SWIM[this.mapIndex % BOSS_SWIM.length];
 
         this.node.setPosition(x, y, 0);
         this.node.active = true;
@@ -85,11 +89,16 @@ export class BossAI extends Component {
         }
         const path = SPRITES.BOSSES[this.mapIndex % SPRITES.BOSSES.length];
         loadSpriteOnto(this.node, path, BOSS.RADIUS * 2.6, BOSS.RADIUS * 2.6);
+        // 附加发光部位（鮟鱇 BOSS 灯笼闪烁）
+        const sNode = this.node.getChildByName('Sprite');
+        if (sNode) this._swim.attachGlow(sNode, SWIM[this._swimType] || SWIM.boss);
     }
 
     update(dt: number): void {
         if (!this._active) return;
         if (this.gameManager?.state !== GameState.PLAYING) return;
+
+        this._applySwim(dt);
 
         if (this.hitFlash > 0) this.hitFlash -= dt;
 
@@ -161,6 +170,13 @@ export class BossAI extends Component {
             bullet.init(a, BOSS.BURST_SPEED, bulletDamage, BOSS.BURST_RANGE, true, 0);
         }
         this.audioManager?.burst();
+    }
+
+    /** 程序化"活"动画：只作用于 Sprite 子节点，不影响移动/碰撞/弹幕 */
+    private _applySwim(dt: number): void {
+        const sNode = this.node.getChildByName('Sprite');
+        if (!sNode || !sNode.active) return;
+        this._swim.update(dt, sNode, SWIM[this._swimType] || SWIM.boss);
     }
 
     /** 受击 */

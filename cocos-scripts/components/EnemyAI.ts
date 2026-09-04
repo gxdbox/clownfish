@@ -6,6 +6,7 @@
 import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
 import { ENEMY, WORLD, GameState, SPRITES, PLAYER } from '../config';
 import { ensureRenderTransform, loadSpriteOnto } from '../util';
+import { SwimAnim, SWIM, ENEMY_SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
 import type { GameManager } from '../managers/GameManager';
@@ -52,6 +53,8 @@ export class EnemyAI extends Component {
     faceAngle = 0;
     isElite = false;
     private _active = true;
+    private _swim = new SwimAnim();
+    private _swimType = 'jelly';
 
     /** 初始化敌人（由 SpawnManager 调用）；hpMult = 当前地图血量倍率 */
     init(x: number, y: number, wave: number, type: number, hpMult = 1): void {
@@ -70,6 +73,7 @@ export class EnemyAI extends Component {
         this.faceAngle = 0;
         this.isElite = false;
         this._active = true;
+        this._swimType = ENEMY_SWIM[this.type % ENEMY_SWIM.length];
 
         this.node.setPosition(x, y, 0);
         this.node.active = true;
@@ -105,12 +109,17 @@ export class EnemyAI extends Component {
         const path = SPRITES.ENEMIES[this.type % SPRITES.ENEMIES.length];
         const t = TYPES[this.type];
         loadSpriteOnto(this.node, path, t.r * 2.6, t.r * 2.6);
+        // 附加发光部位（鮟鱇灯笼）；素材加载前即可挂（尺寸已在 loadSpriteOnto 设置）
+        const sNode = this.node.getChildByName('Sprite');
+        if (sNode) this._swim.attachGlow(sNode, SWIM[this._swimType] || SWIM.jelly);
     }
 
     update(dt: number): void {
         if (!this._active) return;
         // 暂停/结算时冻结（引擎自动调用本方法，需自行判断状态）
         if (this.gameManager?.state !== GameState.PLAYING) return;
+
+        this._applySwim(dt);
 
         if (this.hitFlash > 0) this.hitFlash -= dt;
 
@@ -151,6 +160,13 @@ export class EnemyAI extends Component {
         if (dx * dx + dy * dy < r * r) {
             this.player.damagePlayer(this.damage, resolved[0], resolved[1]);
         }
+    }
+
+    /** 程序化"活"动画：只作用于 Sprite 子节点，不影响移动/碰撞 */
+    private _applySwim(dt: number): void {
+        const sNode = this.node.getChildByName('Sprite');
+        if (!sNode || !sNode.active) return;
+        this._swim.update(dt, sNode, SWIM[this._swimType] || SWIM.jelly);
     }
 
     /** 受击（子弹命中） */

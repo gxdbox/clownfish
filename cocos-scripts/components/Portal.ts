@@ -7,6 +7,7 @@
 import { _decorator, Component, Node, Graphics, Color, Sprite } from 'cc';
 import { SPRITES, WORLD, GameState } from '../config';
 import { ensureRenderTransform, loadSpriteOnto, dist2 } from '../util';
+import { SwimAnim, SWIM } from '../swimAnim';
 import type { GameManager } from '../managers/GameManager';
 import type { PlayerController } from './PlayerController';
 const { ccclass, property } = _decorator;
@@ -22,6 +23,7 @@ export class Portal extends Component {
 
     private _active = true;
     private _spriteNode: Node | null = null;
+    private _swim = new SwimAnim(); // 传送门脉动呼吸 + 轻微浮动
 
     init(x: number, y: number): void {
         this._active = true;
@@ -66,6 +68,9 @@ export class Portal extends Component {
         const e = this.node.eulerAngles;
         this.node.setRotationFromEuler(0, 0, (e.z + 40 * dt) % 360);
 
+        // 脉动呼吸 + 轻微浮动（只作用于 Sprite 子节点，旋转不受影响）
+        this._applySwim(dt);
+
         // 玩家进入触发半径 → 推进到下一张地图
         const ppos = this.player.node.position;
         const pos = this.node.position;
@@ -75,6 +80,12 @@ export class Portal extends Component {
             this.node.destroy();
             this.gameManager?.advanceMap();
         }
+    }
+
+    /** 程序化动画：传送门脉动（Sprite 子节点缩放呼吸 + 上下浮动） */
+    private _applySwim(dt: number): void {
+        if (!this._spriteNode || !this._spriteNode.isValid || !this._spriteNode.active) return;
+        this._swim.update(dt, this._spriteNode, SWIM.portal);
     }
 
     recycle(): void {

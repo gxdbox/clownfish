@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小丑鱼 · 素材动画预览</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #04121f; overflow: hidden; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #scene { display: block; }
+  #hud {
+    position: fixed; top: 14px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5;
+    color: rgba(255,255,255,0.92); text-shadow: 0 2px 10px rgba(0,40,80,0.9);
+  }
+  #hud h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 3px; }
+  #hud p { margin: 4px 0 0; font-size: 12px; opacity: 0.75; letter-spacing: 1px; }
+  #tip {
+    position: fixed; bottom: 14px; left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.45);
+    font-size: 11px; letter-spacing: 1px; pointer-events: none; z-index: 5;
+  }
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>🐟 小丑鱼 · 素材动画预览</h1>
+  <p>单张静态 PNG + 程序化动画 —— 无需新素材，让每个生物活起来</p>
+</div>
+<div id="tip">全部素材由代码驱动：游动 · 漂浮 · 呼吸 · 鼓胀 · 摆动 · 灯笼闪烁 · 传送门旋转</div>
+<canvas id="scene"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+
+  // ===== 尺寸自适应 =====
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ===== 加载素材 =====
+  const BASE = 'assets/resources/sprites/';
+  const SPRITES = {
+    player:  'player_clownfish.png',
+    jelly:   'enemy_jellyfish.png',
+    crab:    'enemy_crab.png',
+    eel:     'enemy_eel.png',
+    puffer:  'enemy_puffer.png',
+    angler:  'enemy_angler.png',
+    bossCrab: 'boss_crab.png',
+    bossEel: 'boss_eel.png',
+    bossAngler: 'boss_angler.png',
+    portal:  'portal.png',
+  };
+  const imgs = {};
+  let loaded = 0, total = Object.keys(SPRITES).length;
+  for (const k in SPRITES) {
+    const img = new Image();
+    img.onload = () => { loaded++; };
+    img.src = BASE + SPRITES[k];
+    imgs[k] = img;
+  }
+
+  // ===== 场景氛围（深海） =====
+  // 气泡粒子
+  const bubbles = [];
+  for (let i = 0; i < 60; i++) {
+    bubbles.push({ x: Math.random() * 1600, y: Math.random() * 900, r: 0.6 + Math.random() * 2.4, spd: 8 + Math.random() * 26, sway: Math.random() * Math.PI * 2, wob: 0.5 + Math.random() * 1.2 });
+  }
+  // 水草（底部摆动）
+  const weeds = [];
+  for (let i = 0; i < 24; i++) {
+    weeds.push({ x: Math.random() * 1600, h: 60 + Math.random() * 90, ph: Math.random() * Math.PI * 2, col: `hsla(${140 + Math.random() * 40}, ${45 + Math.random() * 25}%, ${30 + Math.random() * 20}%, 0.5)` });
+  }
+  // 海底小石子
+  const pebbles = [];
+  for (let i = 0; i < 40; i++) pebbles.push({ x: Math.random() * 1600, y: 760 + Math.random() * 60, r: 2 + Math.random() * 6, a: 0.12 + Math.random() * 0.25 });
+
+  // ===== 生物配置：每种生物一种"活法" =====
+  // anim: 每个生物的动画参数
+  //  - bob: 上下浮动幅度(px) / 频率
+  //  - sway: 绕Z轴左右摇摆(度) / 频率（游泳/晃动）
+  //  - breath: 身体缩放呼吸幅度 / 频率（河豚鼓胀、章鱼呼吸）
+  //  - spin: 持续旋转(度/秒)（传送门）
+  //  - glow: 头顶/某处发光闪烁 [xOff, yOff, r, 频, 强度]（鮟鱇灯笼）
+  //  - flip: 是否水平翻转
+  const creatures = [
+    // —— 主角 ——
+    { key: 'player', name: '小丑鱼 · 玩家', x: 380, y: 320, s: 1.5,
+      bob: [7, 0.9], sway: [14, 2.2], breath: [0.03, 1.6], label: '#ffcf6a' },
+    // —— 普通敌人 ——
+    { key: 'jelly', name: '水母 · 漂浮呼吸', x: 950, y: 210, s: 1.1,
+      bob: [14, 0.55], sway: [6, 1.1], breath: [0.06, 0.8], label: '#ff9ecf' },
+    { key: 'crab', name: '螃蟹 · 左右晃动', x: 1130, y: 430, s: 1.15,
+      bob: [3, 1.3], sway: [10, 1.5], breath: [0.02, 2.0], label: '#ff8a7a' },
+    { key: 'eel', name: '电鳗 · 蛇形摆动', x: 170, y: 200, s: 1.1,
+      bob: [4, 1.6], sway: [26, 2.0], breath: [0.02, 2.5], flip: true, label: '#ffe06a' },
+    { key: 'puffer', name: '河豚 · 鼓胀呼吸', x: 720, y: 470, s: 1.25,
+      bob: [5, 1.0], sway: [4, 0.8], breath: [0.09, 1.2], label: '#ffb84d' },
+    { key: 'angler', name: '鮟鱇 · 灯笼闪烁', x: 180, y: 500, s: 1.15,
+      bob: [6, 0.8], sway: [8, 1.2], breath: [0.03, 1.8],
+      glow: [0, -52, 16, 3.2, 0.9], label: '#9db6ff' },
+    // —— BOSS ——
+    { key: 'bossCrab', name: 'BOSS 螃蟹', x: 1080, y: 620, s: 1.9,
+      bob: [4, 0.7], sway: [12, 1.0], breath: [0.02, 1.4], label: '#ffb3b3' },
+    { key: 'bossEel', name: 'BOSS 电鳗', x: 620, y: 130, s: 1.7,
+      bob: [3, 1.2], sway: [30, 1.4], breath: [0.02, 2.0], flip: true, label: '#ffe9a8' },
+    { key: 'bossAngler', name: 'BOSS 鮟鱇', x: 880, y: 330, s: 1.7,
+      bob: [5, 0.7], sway: [10, 1.0], breath: [0.03, 1.5],
+      glow: [0, -74, 22, 2.6, 1.0], label: '#c2cfff' },
+    // —— 场景 ——
+    { key: 'portal', name: '传送门 · 旋转', x: 1120, y: 100, s: 1.0,
+      bob: [4, 0.8], spin: 40, breath: [0.04, 1.0], label: '#7fd4ff' },
+  ];
+  // 每生物独立相位，避免全部同步
+  creatures.forEach((c, i) => { c.ph = i * 1.7; });
+
+  // ===== 主循环 =====
+  function draw() {
+    const t = performance.now() / 1000;
+    // —— 背景：深海垂直渐变 ——
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0a2a4a');
+    bg.addColorStop(0.45, '#07203c');
+    bg.addColorStop(1, '#031019');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // 光柱（斜射柔光）
+    ctx.save();
+    for (let i = 0; i < 4; i++) {
+      const lx = W * (0.15 + i * 0.22) + Math.sin(t * 0.1 + i) * 30;
+      const g = ctx.createLinearGradient(lx, -100, lx + 180, H);
+      g.addColorStop(0, 'rgba(120,200,255,0.10)');
+      g.addColorStop(0.6, 'rgba(120,200,255,0.03)');
+      g.addColorStop(1, 'rgba(120,200,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(lx - 60, -100); ctx.lineTo(lx + 60, -100);
+      ctx.lineTo(lx + 260, H); ctx.lineTo(lx + 60, H);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+
+    // 悬浮微粒
+    ctx.fillStyle = 'rgba(180,220,255,0.5)';
+    for (let i = 0; i < 90; i++) {
+      const px = ((i * 137.5 + Math.sin(t * 0.15 + i) * 40) % 1700 + 1700) % 1700;
+      const py = ((i * 211.3 - t * (6 + (i % 5) * 3)) % 950 + 950) % 950;
+      ctx.globalAlpha = 0.12 + 0.2 * Math.abs(Math.sin(t * 0.6 + i));
+      ctx.beginPath(); ctx.arc(px, py, 0.8 + (i % 3) * 0.6, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 海底沙地
+    const sand = ctx.createLinearGradient(0, H - 120, 0, H);
+    sand.addColorStop(0, 'rgba(90,110,130,0)');
+    sand.addColorStop(0.4, 'rgba(90,110,130,0.18)');
+    sand.addColorStop(1, 'rgba(40,60,80,0.4)');
+    ctx.fillStyle = sand;
+    ctx.fillRect(0, H - 120, W, 120);
+
+    // 水草（底部摆动）
+    ctx.lineWidth = 3;
+    for (const w of weeds) {
+      ctx.strokeStyle = w.col;
+      ctx.beginPath();
+      ctx.moveTo(w.x, H - 10);
+      for (let sy = 0; sy < w.h; sy += 10) {
+        const sway = Math.sin(t * 1.4 + w.ph + sy * 0.08) * 8 * (sy / w.h);
+        ctx.lineTo(w.x + sway, H - 10 - sy);
+      }
+      ctx.stroke();
+    }
+
+    // 气泡
+    ctx.fillStyle = 'rgba(200,235,255,0.55)';
+    for (const b of bubbles) {
+      const bx = b.x + Math.sin(t * b.wob + b.sway) * 14;
+      let by = b.y - t * b.spd;
+      by = ((by % 950) + 950) % 950;
+      ctx.beginPath(); ctx.arc(bx, by, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 0.7;
+      ctx.beginPath(); ctx.arc(bx - b.r * 0.3, by - b.r * 0.3, b.r * 0.9, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // 海底小石子
+    for (const p of pebbles) {
+      ctx.fillStyle = `rgba(140,160,185,${p.a})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // —— 绘制生物 ——
+    for (const c of creatures) {
+      const img = imgs[c.key];
+      if (!img || !img.complete || img.naturalWidth === 0) continue;
+
+      const a = c.ph + t;
+      const bobY = c.bob ? Math.sin(a * (c.bob[1] ?? 1)) * c.bob[0] : 0;
+      const swayDeg = c.sway ? Math.sin(a * (c.sway[1] ?? 1)) * c.sway[0] : 0;
+      const breath = c.breath ? 1 + Math.sin(a * (c.breath[1] ?? 1)) * c.breath[0] : 1;
+      const spinDeg = c.spin ? t * c.spin : 0;
+
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      const baseW = 150 * c.s;
+      const scale = baseW / iw;
+
+      // 底部投影（悬浮感）
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y + ih * scale * 0.55 + 6, baseW * 0.5, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // 主体
+      ctx.save();
+      ctx.translate(c.x, c.y + bobY);
+      if (spinDeg) ctx.rotate(spinDeg * Math.PI / 180);
+      else ctx.rotate(swayDeg * Math.PI / 180);
+      if (c.flip) { ctx.scale(-1, 1); }
+      ctx.scale(scale * breath, scale * breath);
+
+      // 鮟鱇灯笼发光
+      if (c.glow) {
+        const [gx, gy, gr, gf, gi] = c.glow;
+        const pulse = 0.55 + 0.45 * Math.sin(t * gf);
+        const g = ctx.createRadialGradient(gx, gy, 2, gx, gy, gr * (1.4 + pulse * 0.6));
+        g.addColorStop(0, `rgba(255,240,150,${0.85 * pulse})`);
+        g.addColorStop(0.5, `rgba(255,200,80,${0.35 * pulse})`);
+        g.addColorStop(1, 'rgba(255,180,60,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(gx, gy, gr * 2, 0, Math.PI * 2); ctx.fill();
+      }
+
+      ctx.drawImage(img, -iw / 2, -ih / 2, iw, ih);
+      ctx.restore();
+
+      // 名字标签
+      ctx.save();
+      ctx.font = '11px -apple-system, "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 6;
+      ctx.fillStyle = c.label || '#fff';
+      ctx.globalAlpha = 0.92;
+      ctx.fillText(c.name, c.x, c.y + ih * scale * 0.55 + 26);
+      ctx.restore();
+    }
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

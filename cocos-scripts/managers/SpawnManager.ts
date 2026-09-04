@@ -214,6 +214,7 @@ export class SpawnManager extends Component {
             ai.init(pos.x, pos.y, mapIndex);
         }
         this.currentBoss = ai;
+        this.audioManager?.playBgm('boss'); // BOSS 出场切换 BOSS 战音乐
         this.gameManager?.notify(`👑 ${MAPS[mapIndex % MAPS.length].name} 的 Boss 出现了！`);
     }
 

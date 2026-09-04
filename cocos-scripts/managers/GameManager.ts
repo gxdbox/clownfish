@@ -396,6 +396,7 @@ export class GameManager extends Component {
             step = 'ui';
             this.playTime = 0;
             this.state = GameState.PLAYING;
+            this.audioManager?.playBgm(this._mapBgm());
             this._showUI('none');
             // 触屏操作提示（淡显，用过即淡出）
             this.joystick?.showHints();
@@ -462,6 +463,7 @@ export class GameManager extends Component {
         if (this.state !== GameState.PLAYING) return;
         this.state = GameState.GAMEOVER;
         this.audioManager?.gameover();
+        this.audioManager?.playBgm('defeat');
         this.cameraFollow?.addShake(12);
 
         this._showUI('gameover');
@@ -514,7 +516,13 @@ export class GameManager extends Component {
         this.spawnManager?.resetForNewMap();
         this.playerController?.placeAtStart();
         this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
+        this.audioManager?.playBgm(this._mapBgm());
         this.notify(`🌊 进入 ${map.name}（${map.subtitle}）`);
+    }
+
+    /** 当前地图对应的 BGM key（0珊瑚礁/1深海/2海底火山） */
+    private _mapBgm(): 'map1_coral' | 'map2_deep' | 'map3_volcano' {
+        return (['map1_coral', 'map2_deep', 'map3_volcano'] as const)[this.mapIndex % 3];
     }
 
     /** 通关结算（击败全部三个世界的 BOSS） */
@@ -522,6 +530,7 @@ export class GameManager extends Component {
         if (this.state !== GameState.PLAYING) return;
         this.state = GameState.GAMEOVER;
         this.audioManager?.gameover();
+        this.audioManager?.playBgm('victory');
         this._showUI('gameover');
         this.node.emit('show-gameover', {
             time: this.playTime,

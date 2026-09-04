@@ -6,13 +6,27 @@
  * 背景音乐：有 bgmClip 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
  * 微信小游戏：AudioSource 自动适配 wx.createInnerAudioContext。
  */
-import { _decorator, Component, AudioClip, AudioSource, Node, resources } from 'cc';
+import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween } from 'cc';
 const { ccclass, property } = _decorator;
 
 /** 浏览器 WebAudio 类型（Cocos 工程 lib 可能不含 DOM 类型，统一用 any 兼容） */
 type AnyAudioCtx = any;
 type AnyGainNode = any;
 type AnyOscNode = any;
+
+/** 背景音乐场景 key（对应 assets/resources/audio/ 下的 m4a，AI 生成） */
+export type BgmKey = 'menu' | 'map1_coral' | 'map2_deep' | 'map3_volcano' | 'boss' | 'victory' | 'defeat';
+
+/** BGM key → 属性名（playBgm 用） */
+const BGM_PROP: Record<BgmKey, string> = {
+    menu: 'menuClip',
+    map1_coral: 'map1CoralClip',
+    map2_deep: 'map2DeepClip',
+    map3_volcano: 'map3VolcanoClip',
+    boss: 'bossClip',
+    victory: 'victoryClip',
+    defeat: 'defeatClip',
+};
 
 /** 自动加载表：属性名 → assets/resources/audio/ 下的文件名（编辑器拖入过的属性跳过） */
 const CLIP_SOURCES: Array<[string, string]> = [
@@ -30,6 +44,14 @@ const CLIP_SOURCES: Array<[string, string]> = [
     ['spikeHitClip', 'spike_hit'],
     ['clickClip', 'click'],
     ['bgmClip', 'bgm'],
+    // AI 生成的 7 首 BGM（方案A：90s 循环段 + 64k）
+    ['menuClip', 'menu'],
+    ['map1CoralClip', 'map1_coral'],
+    ['map2DeepClip', 'map2_deep'],
+    ['map3VolcanoClip', 'map3_volcano'],
+    ['bossClip', 'boss'],
+    ['victoryClip', 'victory'],
+    ['defeatClip', 'defeat'],
 ];
 
 @ccclass('AudioManager')
@@ -49,6 +71,14 @@ export class AudioManager extends Component {
     @property(AudioClip) spikeHitClip: AudioClip | null = null;
     @property(AudioClip) clickClip: AudioClip | null = null;
     @property(AudioClip) bgmClip: AudioClip | null = null;
+    // AI 生成的 7 首 BGM
+    @property(AudioClip) menuClip: AudioClip | null = null;
+    @property(AudioClip) map1CoralClip: AudioClip | null = null;
+    @property(AudioClip) map2DeepClip: AudioClip | null = null;
+    @property(AudioClip) map3VolcanoClip: AudioClip | null = null;
+    @property(AudioClip) bossClip: AudioClip | null = null;
+    @property(AudioClip) victoryClip: AudioClip | null = null;
+    @property(AudioClip) defeatClip: AudioClip | null = null;
 
     private _source: AudioSource | null = null;      // 音效播放器
     private _bgmSource: AudioSource | null = null;   // BGM 播放器（独立子节点，循环）
@@ -59,6 +89,8 @@ export class AudioManager extends Component {
     private _bgmCtx: AnyAudioCtx | null = null;
     private _bgmGain: AnyGainNode | null = null;
     private _bgmStarted = false;
+    private _currentBgm: BgmKey | null = null; // 当前正在播的 BGM
+    private _pendingBgm: BgmKey | null = null; // 素材未加载完成时挂起的待播 BGM
     private readonly BGM_VOLUME = 0.06;
 
     get muted(): boolean { return this._muted; }
@@ -80,17 +112,73 @@ export class AudioManager extends Component {
             resources.load(`audio/${name}`, AudioClip, (err, clip) => {
                 if (err || !clip) return;
                 (this as any)[key] = clip;
-                // BGM 素材晚到时补播（玩家已解锁过音频）
-                if (key === 'bgmClip' && this._bgmStarted && this._bgmSource && !this._bgmSource.playing) {
-                    this._playBgmClip();
+                // BGM 素材晚到时补播：若正是当前挂起的待播曲，立即切换
+                const bgmKey = this._bgmKeyOfProp(key);
+                if (bgmKey && this._bgmStarted && this._pendingBgm === bgmKey) {
+                    this.playBgm(bgmKey);
                 }
             });
         }
     }
 
-    /** 首次用户交互时解锁音频（微信小游戏需要），并启动背景音乐 */
+    /** 首次用户交互时解锁音频（微信小游戏需要），并播默认主菜单 BGM */
     unlock(): void {
-        this.startBgm();
+        if (this._bgmStarted) return;
+        this._bgmStarted = true;
+        this.playBgm('menu');
+    }
+
+    /**
+     * 背景音乐切换：切到指定场景曲（loop + 淡入）。
+     * 素材未加载完成时挂起（_pendingBgm），加载回调会自动补播。
+     * 没有任何 AI 素材且 WebAudio 可用时，回退程序化合成的氛围 BGM 兜底。
+     */
+    playBgm(key: BgmKey): void {
+        if (!key) return;
+        this._bgmStarted = true;
+        if (key === this._currentBgm) { this._pendingBgm = null; return; }
+        this._pendingBgm = key;
+        const clip = this._bgmClipOf(key);
+        if (!clip) {
+            // 素材未加载完成：等加载回调补播；WebAudio 可用时先合成氛围兜底
+            if (!this._bgmCtx) {
+                try {
+                    this._buildBgm();
+                    if (this._bgmCtx && this._bgmCtx.state === 'suspended') this._bgmCtx.resume();
+                } catch (e) {
+                    console.warn('[Clownfish] BGM 兜底初始化失败:', e);
+                }
+            }
+            return;
+        }
+        this._pendingBgm = null;
+        this._currentBgm = key;
+        this._playBgmClip(clip);
+    }
+
+    private _bgmClipOf(key: BgmKey): AudioClip | null {
+        return (this as any)[BGM_PROP[key]] ?? null;
+    }
+
+    private _bgmKeyOfProp(prop: string): BgmKey | null {
+        for (const k in BGM_PROP) {
+            if (BGM_PROP[k as BgmKey] === prop) return k as BgmKey;
+        }
+        return null;
+    }
+
+    /** 播放指定 BGM clip：loop + 淡入 */
+    private _playBgmClip(clip: AudioClip): void {
+        if (!this._bgmSource || !clip) return;
+        tween(this._bgmSource).stop();
+        this._bgmSource.stop();
+        this._bgmSource.clip = clip;
+        this._bgmSource.loop = true;
+        this._bgmSource.volume = 0;
+        this._bgmSource.play();
+        tween(this._bgmSource)
+            .to(0.6, { volume: this._muted ? 0 : 0.5 }, { easing: 'quadOut' })
+            .start();
     }
 
     toggleMute(): boolean {
@@ -105,29 +193,6 @@ export class AudioManager extends Component {
     }
 
     // ===== 背景音乐 =====
-
-    /** 启动 BGM：优先素材循环播放，无素材时 WebAudio 合成（首次用户手势时调用） */
-    startBgm(): void {
-        if (this._bgmStarted) return;
-        this._bgmStarted = true;
-        if (this.bgmClip) {
-            this._playBgmClip();
-            return;
-        }
-        try {
-            this._buildBgm();
-            if (this._bgmCtx && this._bgmCtx.state === 'suspended') this._bgmCtx.resume();
-        } catch (e) {
-            console.warn('[Clownfish] BGM 初始化失败:', e);
-        }
-    }
-
-    private _playBgmClip(): void {
-        if (!this._bgmSource || !this.bgmClip) return;
-        this._bgmSource.clip = this.bgmClip;
-        this._bgmSource.volume = this._muted ? 0 : 0.5;
-        this._bgmSource.play();
-    }
 
     private _buildBgm(): void {
         const AC = (typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext)) || null;

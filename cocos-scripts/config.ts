@@ -243,16 +243,59 @@ export const MAPS: MapTheme[] = [
     },
 ];
 
-// ===== BOSS（每图末尾的大 BOSS：追逐 + 周期性环形弹幕） =====
+// ===== BOSS（每图末尾的大 BOSS：追逐 + 环形/瞄准弹幕交替 + 冲撞 + 狂暴阶段 + 召唤小怪） =====
 export const BOSS = {
     RADIUS: 55,
     SPEED: 40,                  // 兜底速度（实际用 MAPS[].bossSpeed）
     CONTACT_DAMAGE: 25,         // 兜底接触伤害（实际用 MAPS[].bossDamage）
-    BURST_INTERVAL: 3.5,        // 环形弹幕间隔(秒)
+    XP_VALUE: 100,
+
+    // —— 交替弹幕（环形 ↔ 瞄准扇形，攻击节奏基准） ——
+    BURST_INTERVAL: 3.5,        // 弹幕交替间隔(秒)（环形与扇形各按此节奏轮换）
     BURST_COUNT: 36,            // 环形弹幕子弹数
     BURST_SPEED: 200,
     BURST_RANGE: 700,           // 弹幕射程(px)
-    XP_VALUE: 100,
+
+    AIM_COUNT: 5,               // 瞄准扇形弹数量（3-5 发，朝玩家当前方向）
+    AIM_SPREAD: 0.42,           // 扇形总张角(弧度)
+    AIM_SPEED: 250,             // 瞄准弹速度（略快于环形弹，有飞行时间可读性）
+    AIM_RANGE: 620,             // 瞄准弹射程
+    AIM_DAMAGE: 14,             // 瞄准弹伤害（独立可调）
+
+    // —— 冲撞/冲撞技能（蓄力预警 → 高速直线 → 硬直输出窗口） ——
+    CHARGE_INTERVAL: 6.5,       // 冲撞周期(秒)（从硬直结束起算）
+    CHARGE_WINDUP: 0.7,         // 蓄力预警时长(秒)（红圈 + 变色，玩家可见）
+    CHARGE_SPEED_MULT: 2.8,     // 冲撞速度 = Boss移速 × 倍率（2-3倍，见数值表备注）
+    CHARGE_RANGE: 900,          // 冲撞最大距离(px)（撞墙或到顶则停）
+    CHARGE_STUN: 1.0,           // 冲撞后硬直(秒)（输出窗口）
+    CHARGE_DAMAGE_MULT: 1.5,    // 冲撞接触伤害倍率（比普通接触更痛）
+
+    // —— 狂暴阶段（血量阈值，分两档） ——
+    ENRAGE_HP_1: 0.5,           // 血量 <50% 进入一档狂暴
+    ENRAGE_HP_2: 0.3,           // 血量 <30% 进入二档狂暴
+    ENRAGE_SPEED_MULT_1: 1.3,   // 一档移速倍率
+    ENRAGE_SPEED_MULT_2: 1.6,   // 二档移速倍率
+    ENRAGE_ATTACK_MULT_1: 0.8,  // 一档弹幕间隔倍率（更密）
+    ENRAGE_ATTACK_MULT_2: 0.6,  // 二档弹幕间隔倍率
+    ENRAGE_BULLET_SPEED_MULT_1: 1.2,  // 一档弹速倍率
+    ENRAGE_BULLET_SPEED_MULT_2: 1.35, // 二档弹速倍率
+    ENRAGE_CHARGE_MULT_1: 0.8,  // 一档冲撞CD倍率（更频繁）
+    ENRAGE_CHARGE_MULT_2: 0.6,  // 二档冲撞CD倍率
+
+    // —— 二档狂暴新技能：双环 + 追踪弹 ——
+    DOUBLE_RING: true,          // 二档：环形弹升级为双环（角度错位）
+    DOUBLE_RING_OFFSET: 0.5,    // 双环角度错位(弧度)
+    DOUBLE_RING_SPEED_MULT: 1.15, // 第二环弹速倍率
+    HOMING: true,               // 二档：瞄准弹升级为追踪弹
+    HOMING_TURN_RATE: 2.4,      // 追踪弹转向速率(弧度/秒)（有限追踪，可甩开）
+
+    // —— 召唤小怪（狂暴后周期召唤该图普通小怪，复用 EnemyAI 逻辑） ——
+    SUMMON_ENRAGE_TIER: 1,      // ≥一档狂暴后开始召唤
+    SUMMON_INTERVAL: 11.0,      // 召唤间隔(秒)
+    SUMMON_MIN: 1,              // 每次最少数量
+    SUMMON_MAX: 2,              // 每次最多数量
+    SUMMON_DIST: 380,           // 召唤位置距 BOSS 距离(px)
+    SUMMON_WAVE_FALLBACK: 1,    // 拿不到全局波次时的兜底波次
 };
 
 // ===== 精灵素材映射（assets/resources/sprites/*.png，无扩展名） =====

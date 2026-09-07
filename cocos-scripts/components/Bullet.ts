@@ -36,6 +36,11 @@ export class Bullet extends Component {
     private _pierce = 0;
     private _active = true;
 
+    /** 追踪弹（仅敌弹）：每帧朝玩家有限转向；默认 false 不影响现有敌弹 */
+    homing = false;
+    /** 追踪转向速率(弧度/秒)，越小越容易被甩开 */
+    homingTurnRate = 2.4;
+
     /** 初始化子弹参数 */
     init(angle: number, speed: number, damage: number, range: number, hostile: boolean, pierce: number): void {
         this._vx = Math.cos(angle) * speed;
@@ -77,6 +82,23 @@ export class Bullet extends Component {
         }
 
         this.node.setPosition(nx, ny, pos.z);
+
+        // 追踪弹（仅敌弹）：有限转向朝玩家，防止无限追踪导致无解弹幕
+        if (this._hostile && this.homing && this.targetPlayer && !this.targetPlayer.dead && this.homingTurnRate > 0) {
+            const ppos = this.targetPlayer.node.position;
+            const cur = Math.atan2(this._vy, this._vx);
+            const want = Math.atan2(ppos.y - ny, ppos.x - nx);
+            let diff = want - cur;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            const maxTurn = this.homingTurnRate * dt;
+            const turn = diff > maxTurn ? maxTurn : (diff < -maxTurn ? -maxTurn : diff);
+            const spd = Math.sqrt(this._vx * this._vx + this._vy * this._vy);
+            const na = cur + turn;
+            this._vx = Math.cos(na) * spd;
+            this._vy = Math.sin(na) * spd;
+            this.node.setRotationFromEuler(0, 0, -na * 180 / Math.PI);
+        }
 
         if (!this._hostile) {
             this._checkHitEnemy();

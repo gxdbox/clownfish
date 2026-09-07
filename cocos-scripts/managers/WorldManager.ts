@@ -4,21 +4,10 @@
  * 地形生成：纯数据层，生成 {type, x, y, w, h, r} 配置，用 Graphics 一次性绘制（静态，无需预制体）。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Graphics, Color } from 'cc';
-import { clamp, rand, dist2, rectOverlap } from '../util';
-import { WORLD, PLAYER, TERRAIN, RENDER, MAPS } from '../config';
+import { _decorator, Component, Graphics, Color, Node, Layers } from 'cc';
+import { clamp, rand, dist2, rectOverlap, loadSpriteOnto } from '../util';
+import { WORLD, PLAYER, TERRAIN, RENDER, MAPS, SPRITES } from '../config';
 const { ccclass, property } = _decorator;
-
-// ===== 地形渲染配色（由 config.MAPS 按地图提供） =====
-const WALL_COLOR = new Color(74, 84, 100, 255);
-const WALL_EDGE_COLOR = new Color(100, 112, 130, 255);
-const CORAL_COLOR = new Color(214, 106, 140, 255);
-const CORAL_EDGE_COLOR = new Color(235, 140, 165, 255);
-const BOULDER_COLOR = new Color(52, 62, 78, 255);
-const BOULDER_HL_COLOR = new Color(90, 100, 118, 255);
-const SPIKE_COLOR = new Color(148, 160, 178, 255);
-const URCHIN_COLOR = new Color(108, 70, 138, 255);
-const URCHIN_SPIKE_COLOR = new Color(70, 44, 96, 255);
 
 // ===== 空间哈希 =====
 const CELL = WORLD.GRID_CELL;
@@ -75,6 +64,8 @@ export class WorldManager extends Component {
 
     // ===== 地形渲染 =====
     private _gfx: Graphics | null = null;
+    /** 已创建的地形精灵宿主节点（每次 renderTerrain 先清旧再建新，防跨地图堆积） */
+    private _terrainNodes: Node[] = [];
 
     /** 当前地图索引（决定地形配色，0 珊瑚礁 / 1 深海 / 2 海底火山） */
     mapIndex = 0;
@@ -228,7 +219,12 @@ export class WorldManager extends Component {
         return this.terrain;
     }
 
-    /** 用 Graphics 一次性绘制全部地形（静态，只绘制一次） */
+    /**
+     * 绘制全部地形。
+     * 地面底色/瓦片仍用 Graphics（静态海底），地形元素与装饰全部改为 AI 精灵贴图：
+     * 墙体=岩块列、珊瑚块=珊瑚丛行、圆礁石=单个礁石、尖刺/海胆=对应精灵、
+     * 装饰=地图主题素材池（SPRITES.DECALS）。纯视觉层，不改变 generateTerrain 的布局与碰撞。
+     */
     renderTerrain(): void {
         const g = this._gfx;
         if (!g) {
@@ -237,15 +233,17 @@ export class WorldManager extends Component {
         }
         console.log('[Clownfish] 地形开始绘制 walls=' + this.terrain.walls.length + ' spikes=' + this.terrain.spikes.length + ' boulders=' + this.terrain.boulders.length);
         g.clear();
+        // 清掉上一次的地形精灵节点（换地图/重开时防堆积）
+        this._clearTerrainSprites();
 
         const s = WORLD.SIZE;
         const t = RENDER.TILE_SIZE;
         const T = TERRAIN;
 
-        // 地图主题配色（来自 config.MAPS）
+        // 地图主题配色（来自 config.MAPS；地面底色仍用 Graphics）
         const map = MAPS[this.mapIndex % MAPS.length];
         const tileCols = map.tiles.map(([r, gg, b]) => new Color(r, gg, b, 255));
-        const decalCols = map.decals.map(([r, gg, b]) => new Color(r, gg, b, 255));
+        const decalPool = SPRITES.DECALS[this.mapIndex % SPRITES.DECALS.length];
 
         // 地面底色（深蓝海底，世界边界外为场景背景色 = 虚空）
         g.fillColor = tileCols[0];
@@ -264,71 +262,76 @@ export class WorldManager extends Component {
             }
         }
 
-        // 海底装饰（纯视觉小圆点）
+        // 海底装饰（按地图素材池贴小精灵，尺寸/旋转按 type 错开）
         for (const d of this.terrain.decals) {
-            g.fillColor = decalCols[d.type % decalCols.length];
-            g.circle(d.x, d.y, 2.5 + (d.type % 3));
-            g.fill();
+            const p = decalPool[d.type % decalPool.length];
+            const sz = 24 + (d.type % 3) * 5;
+            this._addTerrainSprite(p, d.x, d.y, sz, sz, (d.type * 47) % 360);
         }
 
-        // 墙体（灰色矩形 + 顶部高光）
+        // 墙体（礁石墙 = 沿墙体中线的岩块列；视觉略高于碰撞矩形，读取为石脊）
+        const rock = SPRITES.TERRAIN.ROCK;
         for (const w of this.terrain.walls) {
-            g.fillColor = WALL_COLOR;
-            g.rect(w.x, w.y, w.w, w.h);
-            g.fill();
-            g.fillColor = WALL_EDGE_COLOR;
-            g.rect(w.x, w.y + w.h - 5, w.w, 5);
-            g.fill();
-        }
-
-        // 珊瑚块（粉色矩形 + 顶部高光）
-        for (const c of this.terrain.corals) {
-            g.fillColor = CORAL_COLOR;
-            g.rect(c.x, c.y, c.w, c.h);
-            g.fill();
-            g.fillColor = CORAL_EDGE_COLOR;
-            g.rect(c.x, c.y + c.h - 4, c.w, 4);
-            g.fill();
-        }
-
-        // 圆礁石（深灰圆 + 左上高光）
-        for (const b of this.terrain.boulders) {
-            g.fillColor = BOULDER_COLOR;
-            g.circle(b.x, b.y, b.r);
-            g.fill();
-            g.fillColor = BOULDER_HL_COLOR;
-            g.circle(b.x - b.r * 0.28, b.y - b.r * 0.28, b.r * 0.42);
-            g.fill();
-        }
-
-        // 尖刺（三角钉）
-        const sr = T.SPIKE_RADIUS;
-        for (const sp of this.terrain.spikes) {
-            g.fillColor = SPIKE_COLOR;
-            g.moveTo(sp.x, sp.y - sr);
-            g.lineTo(sp.x + sr * 0.85, sp.y + sr * 0.7);
-            g.lineTo(sp.x - sr * 0.85, sp.y + sr * 0.7);
-            g.close();
-            g.fill();
-        }
-
-        // 海胆（紫球 + 放射刺）
-        const ur = T.URCHIN_RADIUS;
-        g.lineWidth = 2;
-        g.strokeColor = URCHIN_SPIKE_COLOR;
-        for (const u of this.terrain.urchins) {
-            for (let i = 0; i < 8; i++) {
-                const a = (i / 8) * Math.PI * 2;
-                g.moveTo(u.x + Math.cos(a) * ur * 0.5, u.y + Math.sin(a) * ur * 0.5);
-                g.lineTo(u.x + Math.cos(a) * (ur + 4), u.y + Math.sin(a) * (ur + 4));
+            const cy = w.y + w.h / 2;
+            const n = clamp(Math.round(w.w / 56), 2, 8);
+            for (let i = 0; i < n; i++) {
+                const fx = w.x + (w.w / (n - 1)) * i;
+                const fy = cy + rand(-4, 4);
+                const sz = 40 + rand(-5, 6);
+                this._addTerrainSprite(rock, fx, fy, sz, sz, rand(-25, 25));
             }
-            g.fillColor = URCHIN_COLOR;
-            g.circle(u.x, u.y, ur * 0.55);
-            g.fill();
         }
-        g.stroke();
+
+        // 珊瑚块（珊瑚丛行，沿块中线排开）
+        const coral = SPRITES.TERRAIN.CORAL;
+        for (const c of this.terrain.corals) {
+            const cy = c.y + c.h / 2;
+            const n = clamp(Math.round(c.w / 44), 1, 4);
+            for (let i = 0; i < n; i++) {
+                const fx = n === 1 ? c.x + c.w / 2 : c.x + (c.w / (n - 1)) * i;
+                const sz = 34 + rand(-4, 6);
+                this._addTerrainSprite(coral, fx, cy, sz, sz, rand(-20, 20));
+            }
+        }
+
+        // 圆礁石（单个礁石精灵，直径 = 碰撞直径）
+        for (const b of this.terrain.boulders) {
+            this._addTerrainSprite(rock, b.x, b.y, b.r * 2, b.r * 2, rand(-15, 15));
+        }
+
+        // 尖刺（伤害地形，精灵略大于碰撞半径）
+        for (const sp of this.terrain.spikes) {
+            const sz = T.SPIKE_RADIUS * 2.2;
+            this._addTerrainSprite(SPRITES.TERRAIN.SPIKE, sp.x, sp.y, sz, sz);
+        }
+
+        // 海胆（伤害地形）
+        for (const u of this.terrain.urchins) {
+            const sz = T.URCHIN_RADIUS * 2.2;
+            this._addTerrainSprite(SPRITES.TERRAIN.URCHIN, u.x, u.y, sz, sz);
+        }
+
         // 强制刷新 Graphics 命令缓冲区（web-mobile 环境需要显式 flush，否则渲染可能延迟或丢失）
         try { g.flush && g.flush(); } catch {}
+    }
+
+    /** 在 (x,y) 处贴一张地形精灵（host 节点 + loadSpriteOnto；尺寸/旋转由调用方传入） */
+    private _addTerrainSprite(path: string, x: number, y: number, w: number, h: number, rot = 0): void {
+        const host = new Node('TerrSprite');
+        host.layer = Layers.Enum.DEFAULT;
+        host.setPosition(x, y, 0);
+        if (rot !== 0) host.setRotationFromEuler(0, 0, rot);
+        this.node.addChild(host);
+        loadSpriteOnto(host, path, w, h);
+        this._terrainNodes.push(host);
+    }
+
+    /** 销毁全部地形精灵节点（renderTerrain 开头调用，防换地图/重开时旧节点堆积） */
+    private _clearTerrainSprites(): void {
+        for (const n of this._terrainNodes) {
+            if (n && n.isValid) n.destroy();
+        }
+        this._terrainNodes.length = 0;
     }
 
     // ===== 空间哈希 =====

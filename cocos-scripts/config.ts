@@ -271,4 +271,17 @@ export const SPRITES = {
         'sprites/boss_angler',
     ],
     PORTAL: 'sprites/portal',
+    // 地形元素素材（WorldManager.renderTerrain 贴图替换 Graphics 色块；纯装饰视觉，不影响碰撞）
+    TERRAIN: {
+        ROCK: 'sprites/terrain_rock',       // 圆礁石 + 墙体岩块列
+        CORAL: 'sprites/terrain_coral',     // 珊瑚块（矮 AABB 阻挡）
+        SPIKE: 'sprites/terrain_spike',     // 尖刺（伤害地形）
+        URCHIN: 'sprites/terrain_urchin',   // 海胆（伤害地形）
+    },
+    // 海底装饰素材池：每张地图一池（0珊瑚礁 / 1深海 / 2海底火山），按 decal.type 取模选图
+    DECALS: [
+        ['sprites/decal_starfish', 'sprites/decal_shell', 'sprites/decal_seaweed', 'sprites/decal_bubble', 'sprites/decal_plankton'],
+        ['sprites/decal_plankton', 'sprites/decal_bubble', 'sprites/decal_shell', 'sprites/decal_plankton', 'sprites/decal_bubble'],
+        ['sprites/decal_starfish', 'sprites/decal_shell', 'sprites/decal_bubble', 'sprites/decal_plankton', 'sprites/decal_starfish'],
+    ],
 };

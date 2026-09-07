@@ -9,7 +9,7 @@
  * 现改为显式注入 gameManager/targetPlayer/worldManager 引用。
  */
 import { _decorator, Component, Node } from 'cc';
-import { WORLD, BULLET, GameState } from '../config';
+import { WORLD, BULLET, BOSS, GameState } from '../config';
 import type { PlayerController } from './PlayerController';
 import type { WorldManager } from '../managers/WorldManager';
 import type { GameManager } from '../managers/GameManager';
@@ -117,21 +117,21 @@ export class Bullet extends Component {
 
         for (const child of children) {
             if (!child.active) continue;
-            const enemyAI = child.getComponent('EnemyAI') || child.getComponent('EliteAI');
-            if (!enemyAI) continue;
+            // BOSS 也必须可命中（此前漏检 BossAI 导致子弹穿过巨蟹等 Boss 无伤害）
+            const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI') || child.getComponent('BossAI');
+            if (!enemyComp) continue;
 
             const cpos = child.position;
             const dx = cpos.x - pos.x;
             const dy = cpos.y - pos.y;
             const d2 = dx * dx + dy * dy;
-            const enemyRadius = child.getComponent('EnemyAI') ? 13 : 22;
+            const enemyRadius = child.getComponent('EnemyAI') ? 13 : (child.getComponent('BossAI') ? BOSS.RADIUS : 22);
             const hitRadius = 5 + enemyRadius; // bullet radius + enemy radius
 
             if (d2 < hitRadius * hitRadius) {
                 // 命中
-                const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI');
                 let killed = false;
-                if (enemyComp && 'hurtEnemy' in enemyComp) {
+                if ('hurtEnemy' in enemyComp) {
                     (enemyComp as any).hurtEnemy(this._damage, pos.x, pos.y);
                     killed = (enemyComp as any).hp <= 0;
                 }

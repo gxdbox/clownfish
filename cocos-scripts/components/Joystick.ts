@@ -59,7 +59,6 @@ export class Joystick extends Component {
     private _dashBtn: Node | null = null;
     private _dashBtnX = 0;   // 本地坐标（节点中心为原点，用于绘制与命中检测）
     private _dashBtnY = 0;
-    private _dashLogged = false; // 一次性坐标诊断日志（辅助定位坐标系问题）
 
     /** 状态机引用（由 GameManager 注入），非 PLAYING 状态忽略触摸避免拦截 UI 点击 */
     gameManager: GameManager | null = null;
@@ -131,7 +130,7 @@ export class Joystick extends Component {
         // 屏幕两侧偏下位置（节点居中于屏幕，本地坐标即屏幕中心偏移）
         this._hintLX = -vs.width / 2 + 150;
         this._hintLY = -vs.height / 2 + 120;
-        this._hintRX = vs.width / 2 - 150;
+        this._hintRX = vs.width / 2 - 230; // 向内让位，避免与右下角冲刺按钮重叠
         this._hintRY = -vs.height / 2 + 120;
         this._hintL.setPosition(this._hintLX, this._hintLY - 80, 0);
         this._hintR.setPosition(this._hintRX, this._hintRY - 80, 0);
@@ -157,43 +156,22 @@ export class Joystick extends Component {
         if (this.gameManager && this.gameManager.state !== GameState.PLAYING) return;
         const touch = e.touch;
         if (!touch) return;
-        const loc = touch.getLocation();
-        // 冲刺按钮命中（触屏；鼠标点击同样命中）——优先于摇杆
-        // 命中检测必须与绘制用同一坐标系（节点本地坐标，中心原点）。
-        // touch.getLocation() 的坐标系不同平台有歧义（世界坐标=中心原点 / UI坐标=左下原点），
-        // 两种解释都测一遍，保证按钮在任何平台都能命中：
-        if (this._dashBtnX > 0) {
-            const R2 = DASH_BTN_R * DASH_BTN_R;
-            let hit = false;
-            const ut = this.node.getComponent(UITransform);
-            if (ut) {
-                // 解释 A：loc 是节点/世界坐标（中心原点）→ 按钮本地位置换算回世界再比较
-                const wp = ut.convertToWorldSpaceAR(new Vec3(this._dashBtnX, this._dashBtnY, 0));
-                const ddx = loc.x - wp.x, ddy = loc.y - wp.y;
-                if (ddx * ddx + ddy * ddy < R2) hit = true;
-            }
-            if (!hit) {
-                // 解释 B：loc 是 UI/屏幕坐标（左下原点）→ 先减半宽高转节点本地（中心原点）再比较
-                const ut2 = this.node.getComponent(UITransform);
-                const vs = view.getVisibleSize();
-                const w = ut2 ? ut2.contentSize.width : vs.width;
-                const h = ut2 ? ut2.contentSize.height : vs.height;
-                const lx = loc.x - w / 2, ly = loc.y - h / 2;
-                const ddx = lx - this._dashBtnX, ddy = ly - this._dashBtnY;
-                if (ddx * ddx + ddy * ddy < R2) hit = true;
-            }
-            if (hit) {
-                if (!this._dashLogged) {
-                    this._dashLogged = true;
-                    console.log('[Clownfish][dash] 命中 loc=(' + loc.x.toFixed(1) + ',' + loc.y.toFixed(1) +
-                        ') btnLocal=(' + this._dashBtnX.toFixed(0) + ',' + this._dashBtnY.toFixed(0) + ')');
-                }
+        // 必须用 getUILocation()：getLocation() 返回的是「设备物理像素」（引擎内部 clientX * devicePixelRatio），
+        // 而 convertToNodeSpaceAR / Graphics 绘制 / view.getVisibleSize() 全在「设计分辨率单位」空间。
+        // 两者相差 view.getScaleX() × devicePixelRatio（真机/微信通常 2~4 倍），
+        // 用 getLocation() 做命中检测永远打不中固定位置的按钮（摇杆因为只算相对位移所以看起来「还能用」）。
+        const loc = touch.getUILocation();
+        // 屏幕坐标（左下原点）→ 节点本地坐标（Graphics 绘制空间）
+        const lp = this._toLocal(loc.x, loc.y);
+        // 冲刺按钮命中（触屏；鼠标点击由引擎模拟为 touch 同样命中）——优先于摇杆
+        // 与摇杆/绘制共用 _toLocal 节点本地坐标（中心原点），保证命中区与可见按钮完全一致
+        if (this._dashBtnX !== 0 || this._dashBtnY !== 0) {
+            const ddx = lp.x - this._dashBtnX, ddy = lp.y - this._dashBtnY;
+            if (ddx * ddx + ddy * ddy < DASH_BTN_R * DASH_BTN_R) {
                 this.gameManager?.playerController?.tryDash();
                 return;
             }
         }
-        // 屏幕坐标（左下原点）→ 节点本地坐标（Graphics 绘制空间）
-        const lp = this._toLocal(loc.x, loc.y);
         const vw = view.getVisibleSize().width;
         const joy = loc.x < vw * 0.45 ? this._joyMove : this._joyAim;
         if (joy.active) return;
@@ -209,7 +187,8 @@ export class Joystick extends Component {
     private _onTouchMove(e: EventTouch): void {
         const touch = e.touch;
         if (!touch) return;
-        const loc = touch.getLocation();
+        // 同 _onTouchStart：必须用 UI 坐标，否则摇杆行程被 devicePixelRatio 放大，轻推即满舵
+        const loc = touch.getUILocation();
         const lp = this._toLocal(loc.x, loc.y);
         const m = this._joyMove, a = this._joyAim;
         if (m.active && touch.getID() === m.pointerId) this._updateJoystick(m, lp.x, lp.y);
@@ -336,14 +315,11 @@ export class Joystick extends Component {
             return;
         }
         const vs = view.getVisibleSize();
-        // 本地坐标（节点中心为原点），与命中检测一致。
-        // 节点 UITransform 才是真实渲染空间（1280x720），view.getVisibleSize() 可能随设计分辨率设置
-        // 与节点空间不一致 → 用节点内容尺寸计算，保证按钮绘制位置与命中检测在同一坐标系。
-        const ut = this.node.getComponent(UITransform);
-        const w = ut ? ut.contentSize.width : vs.width;
-        const h = ut ? ut.contentSize.height : vs.height;
-        this._dashBtnX = w / 2 - 100;
-        this._dashBtnY = h / 2 - 100;
+        // 右下角（实际可见区内）：HUD 全在顶部、底部空出，拇指自然位。
+        // 必须用 view.getVisibleSize() 而非节点 contentSize：节点 720 高超出手机横屏可见高（约 460），
+        // 按节点空间算 y=+260 会画出屏幕外 → 按钮看不到也按不到。
+        this._dashBtnX = vs.width / 2 - 90;
+        this._dashBtnY = -vs.height / 2 + 95;
 
         const cd = this.gameManager?.playerController?.dashCooldown ?? 0;
         const ready = cd <= 0;

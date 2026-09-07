@@ -70,14 +70,21 @@ def main():
     copy_preserving_meta(os.path.join(REPO, 'cocos-scripts'), os.path.join(assets, 'scripts'))
     # ===== 拷贝资源（audio + sprites，含 .meta） =====
     copy_preserving_meta(os.path.join(REPO, 'assets', 'resources'), os.path.join(assets, 'resources'))
+    # ===== 拷贝 BGM bundle（微信分包，meta 含 compressionType.wechatgame=subpackage，不得重生 uuid） =====
+    copy_preserving_meta(os.path.join(REPO, 'assets', 'bgm'), os.path.join(assets, 'bgm'))
+    # bgm 目录 meta 与目录同级（不在目录内），单独拷贝；分包配置全靠它，禁止 write_meta 重生
+    shutil.copy2(os.path.join(REPO, 'assets', 'bgm.meta'), os.path.join(assets, 'bgm.meta'))
     # ===== 拷贝场景（GameManager 已挂载） =====
     copy_preserving_meta(os.path.join(REPO, 'assets', 'scenes'), os.path.join(assets, 'scenes'))
 
-    # ===== 目录 .meta（顶层目录 UUID 无跨文件引用，可安全重新生成） =====
+    # ===== 目录 .meta：仓库有则拷贝（保留 isBundle/compressionType 等分包配置与稳定 uuid），无才重生 =====
     write_meta(assets, 'directory', new_uuid())
-    write_meta(os.path.join(assets, 'scripts'), 'directory', new_uuid())
-    write_meta(os.path.join(assets, 'resources'), 'directory', new_uuid())
-    write_meta(os.path.join(assets, 'scenes'), 'directory', new_uuid())
+    for name in ('scripts', 'resources', 'scenes'):
+        repo_meta = os.path.join(REPO, 'assets', name + '.meta')
+        if os.path.exists(repo_meta):
+            shutil.copy2(repo_meta, os.path.join(assets, name + '.meta'))
+        else:
+            write_meta(os.path.join(assets, name), 'directory', new_uuid())
 
     n_scripts = sum(1 for _, _, fs in os.walk(os.path.join(assets, 'scripts')) for f in fs if f.endswith('.ts'))
     n_sprites = len([f for f in os.listdir(os.path.join(assets, 'resources', 'sprites')) if f.endswith('.png')])

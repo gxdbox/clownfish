@@ -1,12 +1,14 @@
 /**
  * AudioManager.ts — 音效管理 + 背景音乐
- * 14 个 AudioClip：12 个音效 + click + 1 个 BGM，两种接入方式（任选其一）：
+ * 音效：14 个 AudioClip，两种接入方式（任选其一）：
  *   1. 编辑器属性拖入（优先）；
  *   2. 自动加载：素材放入 assets/resources/audio/ 下同名文件（shoot.m4a 等），代码自动加载。
- * 背景音乐：有 bgmClip 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
+ * BGM：7 首场景曲放独立 bundle `bgm`（assets/bgm/，微信构建配置为分包，不占 4MB 主包），
+ *   运行时 assetManager.loadBundle('bgm') 按需加载；素材晚到时由 _pendingBgm 补播。
+ * 背景音乐：有 BGM 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
  * 微信小游戏：AudioSource 自动适配 wx.createInnerAudioContext。
  */
-import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween } from 'cc';
+import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween, assetManager } from 'cc';
 const { ccclass, property } = _decorator;
 
 /** 浏览器 WebAudio 类型（Cocos 工程 lib 可能不含 DOM 类型，统一用 any 兼容） */
@@ -14,7 +16,7 @@ type AnyAudioCtx = any;
 type AnyGainNode = any;
 type AnyOscNode = any;
 
-/** 背景音乐场景 key（对应 assets/resources/audio/ 下的 m4a，AI 生成） */
+/** 背景音乐场景 key（对应 bgm bundle 下的 m4a，AI 生成） */
 export type BgmKey = 'menu' | 'map1_coral' | 'map2_deep' | 'map3_volcano' | 'boss' | 'victory' | 'defeat';
 
 /** BGM key → 属性名（playBgm 用） */
@@ -44,6 +46,10 @@ const CLIP_SOURCES: Array<[string, string]> = [
     ['spikeHitClip', 'spike_hit'],
     ['clickClip', 'click'],
     ['bgmClip', 'bgm'],
+];
+
+/** BGM 自动加载表：属性名 → bgm bundle 下的文件名（微信分包，运行时按需下载） */
+const BGM_SOURCES: Array<[string, string]> = [
     // AI 生成的 7 首 BGM（方案A：90s 循环段 + 64k）
     ['menuClip', 'menu'],
     ['map1CoralClip', 'map1_coral'],
@@ -106,18 +112,38 @@ export class AudioManager extends Component {
         }
         this._bgmSource = bgmNode.getComponent(AudioSource) || bgmNode.addComponent(AudioSource);
         this._bgmSource.loop = true;
-        // 自动加载素材（assets/resources/audio/ 同名文件，编辑器拖入过的属性优先跳过）
+        // 自动加载音效素材（assets/resources/audio/ 同名文件，编辑器拖入过的属性优先跳过）
         for (const [key, name] of CLIP_SOURCES) {
             if ((this as any)[key]) continue;
             resources.load(`audio/${name}`, AudioClip, (err, clip) => {
                 if (err || !clip) return;
-                (this as any)[key] = clip;
-                // BGM 素材晚到时补播：若正是当前挂起的待播曲，立即切换
-                const bgmKey = this._bgmKeyOfProp(key);
-                if (bgmKey && this._bgmStarted && this._pendingBgm === bgmKey) {
-                    this.playBgm(bgmKey);
-                }
+                this._onClipLoaded(key, clip);
             });
+        }
+        // BGM 走独立 bundle：微信构建中该 bundle 配置为分包（compressionType.wechatgame=subpackage），
+        // 7 首曲不进 4MB 主包，运行时先 wx.loadSubpackage 按需下载；web/编辑器下即普通 bundle。
+        assetManager.loadBundle('bgm', (err, bundle) => {
+            if (err || !bundle) {
+                console.warn('[Clownfish] bgm bundle 加载失败，BGM 回退程序化合成/静音:', err && err.message);
+                return;
+            }
+            for (const [key, name] of BGM_SOURCES) {
+                if ((this as any)[key]) continue;
+                bundle.load(name, AudioClip, (err2, clip) => {
+                    if (err2 || !clip) return;
+                    this._onClipLoaded(key, clip);
+                });
+            }
+        });
+    }
+
+    /** clip 加载完成：挂到属性；若正是当前挂起的待播 BGM 立即补播 */
+    private _onClipLoaded(key: string, clip: AudioClip): void {
+        (this as any)[key] = clip;
+        // BGM 素材晚到时补播：若正是当前挂起的待播曲，立即切换
+        const bgmKey = this._bgmKeyOfProp(key);
+        if (bgmKey && this._bgmStarted && this._pendingBgm === bgmKey) {
+            this.playBgm(bgmKey);
         }
     }
 

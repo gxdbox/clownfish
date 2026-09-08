@@ -42,6 +42,70 @@ GAME_JS_SYSTEMJS_ANCHOR = 'require("src/system.bundle.js");'
 INJECT_MARKER = '// <clownfish: injected subpackage bundle registrations>'
 
 
+AUDIO_EXTS = ('.m4a', '.mp3', '.aac', '.ogg', '.wav', '.pcm')
+
+
+def check_build_health(b: str) -> list[str]:
+    """构建产物健康检查（早发现"构建出空包/分包缺音频"这类静默问题，返回警告列表）。
+
+    - 主包 scenes 为空 → 场景没进包（黑屏，Mac mini 曾出现：library 未导入导致空 build）
+    - resources bundle 无任何 import 资源 → 精灵贴图没进包
+    - bgm 分包无音频文件 → BGM 静音（此前"分包结构齐但 m4a 未进包"的根因）
+    """
+    warns: list[str] = []
+
+    def bundle_cfg(root: str):
+        p = os.path.join(root, 'config.json')
+        if not os.path.isfile(p):
+            return None
+        try:
+            return json.load(open(p))
+        except Exception:
+            return None
+
+    def count_files(root: str) -> int:
+        n = 0
+        for _, _, fs in os.walk(root):
+            n += len(fs)
+        return n
+
+    # 主包场景
+    main_cfg = bundle_cfg(os.path.join(b, 'assets', 'main'))
+    if main_cfg is not None:
+        scenes = main_cfg.get('scenes') or {}
+        if not scenes:
+            warns.append('主包 assets/main/config.json 无 scenes（场景没进包 → 黑屏），请检查 Cocos 构建是否完整（library 导入是否成功）')
+    else:
+        warns.append('主包 assets/main/config.json 缺失')
+
+    # resources 精灵
+    res_cfg = bundle_cfg(os.path.join(b, 'assets', 'resources'))
+    res_import = os.path.join(b, 'assets', 'resources', 'import')
+    if res_cfg is not None:
+        import_ver = res_cfg.get('versions', {}).get('import') or []
+        import_files = count_files(res_import)
+        if not import_ver and import_files == 0:
+            warns.append('resources bundle 无任何 import 资源（精灵贴图没进包），请检查构建是否完整')
+
+    # bgm 分包音频
+    for name in SUBPACKAGES:
+        sp = os.path.join(b, SUBROOT, name)
+        if not os.path.isdir(sp):
+            warns.append(f'分包 {SUBROOT}/{name}/ 不存在')
+            continue
+        audio_files = 0
+        for r, _, fs in os.walk(sp):
+            for f in fs:
+                if f.lower().endswith(AUDIO_EXTS):
+                    audio_files += 1
+        cfg = bundle_cfg(sp)
+        native_ver = cfg.get('versions', {}).get('native') or [] if cfg else []
+        if audio_files == 0 and not native_ver:
+            warns.append(f'分包 {SUBROOT}/{name}/ 内没有任何音频文件（versions.native 为空）→ BGM 静音；'
+                         '请确认 assets/bgm/ 下 m4a 已正确导入并参与该 bundle 构建')
+    return warns
+
+
 def inject_subpackage_registrations(b: str, names: list[str]) -> None:
     """把分包 bundle index.js 里的 System.register 注册代码搬到主包 game.js。
 
@@ -129,6 +193,12 @@ def main() -> int:
     # 6. 分包 bundle 的 prerequisite-imports 注册注入主包（必须：微信不执行分包 JS，
     #    否则 loadBundle('bgm') 报 Unable to instantiate virtual:///prerequisite-imports/bgm）
     inject_subpackage_registrations(b, SUBPACKAGES)
+
+    # 6.5 产物健康检查：早发现"构建出空包/分包缺音频"这类静默问题
+    health_warn = check_build_health(b)
+    if health_warn:
+        for w in health_warn:
+            print('[WARN] ' + w)
 
     # 尺寸核算（stat 实际字节；du 会因磁盘块虚高）
     def sz(root: str, skip=()) -> int:

@@ -253,7 +253,11 @@ export class PlayerController extends Component {
             this.faceAngle = angle;
         } else {
             const target = this._findNearestEnemy(this.bulletRange * 1.2);
-            if (!target) return;
+            if (!target) {
+                // 无目标也不空转：立即重置计时器，避免每帧都跑一遍寻敌（性能隐患）
+                this.fireTimer = Math.max(this.fireInterval * 0.5, 0.05);
+                return;
+            }
             angle = Math.atan2(target.y - this.node.position.y, target.x - this.node.position.x);
             this.faceAngle = angle;
         }
@@ -306,7 +310,7 @@ export class PlayerController extends Component {
         let bestD2 = maxDist * maxDist;
         const children = this.entityManager.children;
         for (const child of children) {
-            if (!child.active) continue;
+            if (!child.isValid || !child.active) continue;
             const enemyAI = this._enemyComponent(child);
             if (!enemyAI) continue;
             const cpos = child.position;
@@ -390,7 +394,7 @@ export class PlayerController extends Component {
         const pos = this.node.position;
         const r = DASH.HIT_RADIUS;
         for (const child of this.entityManager.children) {
-            if (!child.active) continue;
+            if (!child.isValid || !child.active) continue;
             const e = this._enemyComponent(child);
             if (!e || this._dashHitSet.has(e as object)) continue;
             const cpos = child.position;

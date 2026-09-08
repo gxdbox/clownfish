@@ -60,6 +60,7 @@ export class GameManager extends Component {
     playTime = 0;
     mapIndex = 0;                    // 当前世界（0 珊瑚礁 / 1 深海 / 2 海底火山）
     private _levelUpChoices: UpgradeChoice[] = [];
+    private _heartbeatAcc = 0;       // PLAYING 心跳日志计时（每秒输出实体数量）
 
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
@@ -95,8 +96,33 @@ export class GameManager extends Component {
             if (wx && typeof wx.onError === 'function') {
                 wx.onError((err: any) => {
                     const msg = err && err.stack ? String(err.stack) : (err && err.message ? String(err.message) : String(err));
+                    console.error('[Clownfish] wx.onError:', msg);
                     this._showErrorTip('全局异常 ' + msg);
                 });
+            }
+            // 兜底：window 级异常（微信 dev 工具/浏览器环境下 wx.onError 未必覆盖异步回调异常）
+            const win = (globalThis as any).window;
+            if (win) {
+                if (typeof win.onerror === 'function') {
+                    const prev = win.onerror;
+                    win.onerror = (...args: any[]) => {
+                        const msg = args.map((a) => String(a)).join(' ');
+                        console.error('[Clownfish] window.onerror:', msg);
+                        this._showErrorTip('JS异常 ' + msg.slice(0, 400));
+                        if (typeof prev === 'function') return prev.apply(win, args);
+                        return false;
+                    };
+                }
+                if (typeof win.addEventListener === 'function') {
+                    try {
+                        win.addEventListener('unhandledrejection', (ev: any) => {
+                            const reason = ev && ev.reason;
+                            const msg = reason && reason.stack ? String(reason.stack) : (reason && reason.message ? String(reason.message) : String(reason));
+                            console.error('[Clownfish] unhandledrejection:', msg);
+                            this._showErrorTip('Promise异常 ' + msg.slice(0, 400));
+                        });
+                    } catch { /* 忽略 */ }
+                }
             }
         } catch { /* 非微信环境忽略 */ }
 
@@ -585,6 +611,17 @@ export class GameManager extends Component {
         // 注意：实体组件（PlayerController/SpawnManager/EnemyAI/EliteAI/Bullet/Pickup）
         // 均为 Cocos Component，引擎会自动调用其 update，此处不再手动调用，
         // 组件内部通过 gameManager.state === PLAYING 自行判断是否运行。
+
+        // 每秒心跳日志：崩溃定位（微信 dev 工具 webview 被杀后 console 会清空，
+        // 心跳能确认"游戏活到了第几秒"以及实体数量是否失控增长）
+        this._heartbeatAcc += dt;
+        if (this._heartbeatAcc >= 1.0) {
+            this._heartbeatAcc = 0;
+            const entN = this.entityManager ? this.entityManager.children.length : -1;
+            const wm = this.worldManager as any;
+            const terrN = wm && wm._terrainNodes ? wm._terrainNodes.length : -1;
+            console.log(`[Clownfish] PLAYING t=${this.playTime.toFixed(1)}s wave=${this.spawnManager?.wave ?? 0} entities=${entN} terrainSprites=${terrN}`);
+        }
 
         // 更新地形冷却
         this.worldManager?.updateSpikes(dt);

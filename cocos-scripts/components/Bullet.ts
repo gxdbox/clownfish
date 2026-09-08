@@ -116,7 +116,7 @@ export class Bullet extends Component {
         const children = parent.children;
 
         for (const child of children) {
-            if (!child.active) continue;
+            if (!child.isValid || !child.active) continue;
             // BOSS 也必须可命中（此前漏检 BossAI 导致子弹穿过巨蟹等 Boss 无伤害）
             const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI') || child.getComponent('BossAI');
             if (!enemyComp) continue;

@@ -231,6 +231,16 @@ export class WorldManager extends Component {
             console.warn('[Clownfish] WorldManager: 没有 Graphics 组件，地形无法绘制');
             return;
         }
+        try {
+            this._renderTerrainInner(g);
+        } catch (e) {
+            const msg = e instanceof Error ? (e.message + '\n' + (e.stack || '')) : String(e);
+            console.error('[Clownfish] renderTerrain 异常:', msg);
+        }
+    }
+
+    /** 地形绘制主体（try/catch 包裹，微信 dev 工具绘制异常不至于整局闪退） */
+    private _renderTerrainInner(g: Graphics): void {
         console.log('[Clownfish] 地形开始绘制 walls=' + this.terrain.walls.length + ' spikes=' + this.terrain.spikes.length + ' boulders=' + this.terrain.boulders.length);
         g.clear();
         // 清掉上一次的地形精灵节点（换地图/重开时防堆积）
@@ -251,12 +261,16 @@ export class WorldManager extends Component {
         g.fill();
 
         // 地面瓦片变体（64px 粒度模拟贴图颗粒）
+        // 复用单个 Color 对象，避免 ~4000 次 new Color 的 GC 压力（微信 dev 工具/低端机更敏感）
+        const tmpCol = new Color();
         const vt = t * 2;
         for (let ty = 0; ty < s; ty += vt) {
             for (let tx = 0; tx < s; tx += vt) {
                 const v = tileVariant(tx / vt, ty / vt);
                 if (v === 0) continue;
-                g.fillColor = tileCols[v % tileCols.length];
+                const base = tileCols[v % tileCols.length];
+                tmpCol.set(base.r, base.g, base.b, 255);
+                g.fillColor = tmpCol;
                 g.rect(tx, ty, vt, vt);
                 g.fill();
             }

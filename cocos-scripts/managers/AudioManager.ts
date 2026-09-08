@@ -8,7 +8,7 @@
  * 背景音乐：有 BGM 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
  * 微信小游戏：AudioSource 自动适配 wx.createInnerAudioContext。
  */
-import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween, assetManager } from 'cc';
+import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween, assetManager, Color, Label, Layers } from 'cc';
 const { ccclass, property } = _decorator;
 
 /** 浏览器 WebAudio 类型（Cocos 工程 lib 可能不含 DOM 类型，统一用 any 兼容） */
@@ -127,11 +127,32 @@ export class AudioManager extends Component {
                 console.warn('[Clownfish] bgm bundle 加载失败，BGM 回退程序化合成/静音:', err && err.message);
                 return;
             }
+            let loadedCount = 0;
+            const total = BGM_SOURCES.length;
+            let firstErr = '';
             for (const [key, name] of BGM_SOURCES) {
-                if ((this as any)[key]) continue;
+                if ((this as any)[key]) { loadedCount++; continue; }
                 bundle.load(name, AudioClip, (err2, clip) => {
-                    if (err2 || !clip) return;
+                    if (err2 || !clip) {
+                        if (!firstErr) firstErr = err2 && err2.message ? String(err2.message) : name;
+                        return;
+                    }
+                    loadedCount++;
                     this._onClipLoaded(key, clip);
+                    if (loadedCount === total) {
+                        console.log(`[Clownfish] bgm 分包 7 首 BGM 全部加载成功`);
+                    }
+                });
+            }
+            // 分包加载完成回调兜底：全部失败时明确提示（用于区分"分包没放 m4a"与"加载异常"）
+            const bAny = bundle as any;
+            if (bAny && typeof bAny.loadSubpackage === 'function') {
+                bAny.loadSubpackage(() => {
+                    if (loadedCount === 0) {
+                        console.error(`[Clownfish] bgm 分包加载完成但 0 首音频可用（首错=${firstErr}）——请检查构建产物 subpackages/bgm 是否含 m4a`);
+                    }
+                }, (e: any) => {
+                    console.error('[Clownfish] bgm 分包下载失败:', e && e.message);
                 });
             }
         });
@@ -196,15 +217,46 @@ export class AudioManager extends Component {
     /** 播放指定 BGM clip：loop + 淡入 */
     private _playBgmClip(clip: AudioClip): void {
         if (!this._bgmSource || !clip) return;
-        tween(this._bgmSource).stop();
-        this._bgmSource.stop();
-        this._bgmSource.clip = clip;
-        this._bgmSource.loop = true;
-        this._bgmSource.volume = 0;
-        this._bgmSource.play();
-        tween(this._bgmSource)
-            .to(0.6, { volume: this._muted ? 0 : 0.5 }, { easing: 'quadOut' })
-            .start();
+        try {
+            tween(this._bgmSource).stop();
+            this._bgmSource.stop();
+            this._bgmSource.clip = clip;
+            this._bgmSource.loop = true;
+            this._bgmSource.volume = 0;
+            console.log(`[Clownfish] BGM play: ${clip.name || clip.uuid}`);
+            this._bgmSource.play();
+            tween(this._bgmSource)
+                .to(0.6, { volume: this._muted ? 0 : 0.5 }, { easing: 'quadOut' })
+                .start();
+        } catch (e) {
+            // 微信 dev 工具/真机 AudioSource 播放异常不应拖垮整局（静音继续）
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error('[Clownfish] BGM 播放异常:', msg);
+            this._showAudioTip('BGM播放异常 ' + msg);
+        }
+    }
+
+    /** BGM 播放异常上屏提示（不打断游戏，仅提示便于截图反馈） */
+    private _showAudioTip(msg: string): void {
+        try {
+            const scene = this.node.scene;
+            const canvas = scene?.getChildByName('Canvas') ?? undefined;
+            const parent = canvas ?? this.node;
+            let tip = parent.getChildByName('AudioTip');
+            if (!tip) {
+                tip = new Node('AudioTip');
+                tip.layer = Layers.Enum.UI_2D;
+                tip.setPosition(0, -260, 0);
+                parent.addChild(tip);
+                const label = tip.addComponent(Label);
+                label.fontSize = 18;
+                label.color = new Color(255, 150, 90, 255);
+                label.overflow = Label.Overflow.RESIZE_HEIGHT;
+                label.enableWrapText = true;
+            }
+            const label = tip.getComponent(Label);
+            if (label) label.string = msg.slice(0, 200);
+        } catch { /* 提示失败忽略 */ }
     }
 
     toggleMute(): boolean {

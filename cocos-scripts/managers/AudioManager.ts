@@ -8,7 +8,7 @@
  * 背景音乐：有 BGM 素材时用 AudioSource 无缝循环；无素材时回退 WebAudio 程序化合成。
  * 微信小游戏：AudioSource 自动适配 wx.createInnerAudioContext。
  */
-import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween, assetManager, Color, Label, Layers } from 'cc';
+import { _decorator, Component, AudioClip, AudioSource, Node, resources, tween, assetManager, Color, Label, Layers, sys } from 'cc';
 const { ccclass, property } = _decorator;
 
 /** 浏览器 WebAudio 类型（Cocos 工程 lib 可能不含 DOM 类型，统一用 any 兼容） */
@@ -86,10 +86,23 @@ export class AudioManager extends Component {
     @property(AudioClip) victoryClip: AudioClip | null = null;
     @property(AudioClip) defeatClip: AudioClip | null = null;
 
-    private _source: AudioSource | null = null;      // 音效播放器
+    private _source: AudioSource | null = null;      // 音效播放器（低频 one-shot）
     private _bgmSource: AudioSource | null = null;   // BGM 播放器（独立子节点，循环）
     private _muted = false;
+    private _hardMute = false;       // audioMute=1 查询参数硬静音（A/B 验证音频是否崩溃诱因）
     private _lastPlay: Record<string, number> = {};  // 音效节流时间戳（防连击爆音）
+
+    // ===== 高频音效持久源池（微信端每次 playOneShot = 新建一个 innerAudioContext，
+    // 玩家 0.3s 自动射击 + 命中/击杀音效 → 每分钟数百次 create/destroy context，
+    // 是"玩几分钟后 webview 被静默杀掉"的头号嫌疑。持久源 = clip 只加载一次，之后
+    // stop()+play() 复用同一 context，把 churn 从 O(次数) 降到 O(1)） =====
+    private _persistSources: Map<string, AudioSource> = new Map();
+
+    // ===== 音频链路诊断计数（GameManager 心跳日志输出） =====
+    private _oneShotTotal = 0;        // 累计 playOneShot 次数
+    private _oneShotPerSec = 0;       // 上一秒 playOneShot 次数（心跳展示）
+    private _lastOneShotSnapshot = 0; // 上一秒快照（滚动计算 perSec）
+    private _diagAcc = 0;             // 秒级滚动计时
 
     // ===== 程序化 BGM 回退（WebAudio 合成，仅无 bgm 素材时启用） =====
     private _bgmCtx: AnyAudioCtx | null = null;
@@ -101,7 +114,21 @@ export class AudioManager extends Component {
 
     get muted(): boolean { return this._muted; }
 
+    /** 上一秒 playOneShot 次数（心跳诊断） */
+    get oneShotPerSec(): number { return this._oneShotPerSec; }
+    /** 累计 playOneShot 次数（心跳诊断） */
+    get oneShotTotal(): number { return this._oneShotTotal; }
+
     onLoad(): void {
+        // audioMute=1 硬静音开关（A/B 验证音频是否崩溃诱因：`...?audioMute=1` 启动）
+        try {
+            const getParam = (sys as any).getParameterByName;
+            if (typeof getParam === 'function' && getParam('audioMute') === '1') {
+                this._hardMute = true;
+                console.warn('[Clownfish] audioMute=1 硬静音模式：全部音频链路短路，用于验证音频是否崩溃诱因');
+            }
+        } catch { /* 忽略 */ }
+
         // Cocos 3.8 已移除全局 audioEngine，统一用 AudioSource 组件播放音效
         this._source = this.node.getComponent(AudioSource) || this.node.addComponent(AudioSource);
         // BGM 专用 AudioSource（独立子节点，避免与音效 one-shot 相互干扰）
@@ -170,6 +197,7 @@ export class AudioManager extends Component {
 
     /** 首次用户交互时解锁音频（微信小游戏需要），并播默认主菜单 BGM */
     unlock(): void {
+        if (this._hardMute) return;
         if (this._bgmStarted) return;
         this._bgmStarted = true;
         this.playBgm('menu');
@@ -181,7 +209,7 @@ export class AudioManager extends Component {
      * 没有任何 AI 素材且 WebAudio 可用时，回退程序化合成的氛围 BGM 兜底。
      */
     playBgm(key: BgmKey): void {
-        if (!key) return;
+        if (!key || this._hardMute) return;
         this._bgmStarted = true;
         if (key === this._currentBgm) { this._pendingBgm = null; return; }
         this._pendingBgm = key;
@@ -216,16 +244,26 @@ export class AudioManager extends Component {
 
     /** 播放指定 BGM clip：loop + 淡入 */
     private _playBgmClip(clip: AudioClip): void {
-        if (!this._bgmSource || !clip) return;
+        if (!clip) return;
         try {
-            tween(this._bgmSource).stop();
-            this._bgmSource.stop();
-            this._bgmSource.clip = clip;
-            this._bgmSource.loop = true;
-            this._bgmSource.volume = 0;
+            // 换歌 = 销毁旧 BGMAudio 节点 + 重建全新 AudioSource：
+            // 1) 避免 stop() 后 m4a 触发 seek(0)（微信 dev 工具反复 stop/seek 不稳）
+            // 2) 引擎 clip 切换时本来就重建 player，主动销毁更干净
+            const oldNode = this.node.getChildByName('BGMAudio');
+            if (oldNode) {
+                tween(this._bgmSource).stop();
+                oldNode.destroy(); // 引擎会在帧末释放其 innerAudioContext
+            }
+            const bgmNode = new Node('BGMAudio');
+            this.node.addChild(bgmNode);
+            const src = bgmNode.addComponent(AudioSource);
+            this._bgmSource = src;
+            src.clip = clip;
+            src.loop = true;
+            src.volume = 0;
             console.log(`[Clownfish] BGM play: ${clip.name || clip.uuid}`);
-            this._bgmSource.play();
-            tween(this._bgmSource)
+            src.play();
+            tween(src)
                 .to(0.6, { volume: this._muted ? 0 : 0.5 }, { easing: 'quadOut' })
                 .start();
         } catch (e) {
@@ -361,27 +399,84 @@ export class AudioManager extends Component {
         loop();
     }
 
-    /** 播放音效（短路：静音、无 clip、节流期内则跳过） */
+    /**
+     * 播放低频音效（one-shot，走 playOneShot）。
+     * 微信端每次 playOneShot 都会新建一个 innerAudioContext，
+     * 仅用于低频事件（升级/爆炸/激光/点击等），高频音效走 playPersist。
+     */
     private play(key: string, clip: AudioClip | null, gap = 0): void {
-        if (this._muted || !clip || !this._source) return;
+        if (this._muted || this._hardMute || !clip || !this._source) return;
         const now = Date.now();
         if (gap > 0 && now - (this._lastPlay[key] || 0) < gap * 1000) return;
         this._lastPlay[key] = now;
-        this._source.playOneShot(clip, 0.45);
+        try {
+            this._oneShotTotal++;
+            this._source.playOneShot(clip, 0.45);
+        } catch (e) {
+            console.error('[Clownfish] SFX 播放异常:', e instanceof Error ? e.message : String(e));
+        }
     }
 
-    shoot(): void { this.play('shoot', this.shootClip, 0.05); }
-    hit(): void { this.play('hit', this.hitClip, 0.06); }
-    kill(): void { this.play('kill', this.killClip, 0.1); }
-    hurt(): void { this.play('hurt', this.hurtClip, 0.12); }
-    pickup(): void { this.play('pickup', this.pickupClip, 0.05); }
+    /**
+     * 播放高频音效（持久源复用）：为每个高频音效维护一个专用 AudioSource，
+     * clip 只 set 一次（引擎只新建一次 innerAudioContext），之后 stop()+play() 复用同一 context。
+     * 把"射击/命中/击杀/拾取"这类高频音效的 context 创建次数从 O(次数) 降到 O(1)，
+     * 消除"玩几分钟后 innerAudioContext 高频 churn 拖垮微信 webview"的头号嫌疑。
+     */
+    private playPersist(key: string, clip: AudioClip | null, gap = 0): void {
+        if (this._muted || this._hardMute || !clip) return;
+        const now = Date.now();
+        if (gap > 0 && now - (this._lastPlay[key] || 0) < gap * 1000) return;
+        this._lastPlay[key] = now;
+        try {
+            let src = this._persistSources.get(key);
+            if (!src) {
+                const n = new Node('Sfx_' + key);
+                this.node.addChild(n);
+                src = n.addComponent(AudioSource);
+                src.loop = false;
+                src.clip = clip; // 首次 set clip → 引擎加载一次 → 一个 innerAudioContext
+                this._persistSources.set(key, src);
+                src.play(); // 首次：排队等 clip 加载后自动播
+                return;
+            }
+            // 重播：仅当正在播才先 stop（复用同一 context，不新建）
+            if (src.playing) src.stop();
+            src.play();
+        } catch (e) {
+            console.error('[Clownfish] SFX 播放异常:', e instanceof Error ? e.message : String(e));
+        }
+    }
+
+    /** 每帧诊断滚动：统计上一秒 playOneShot 次数（供 GameManager 心跳输出） */
+    update(dt: number): void {
+        if (this._hardMute) return;
+        this._diagAcc += dt;
+        if (this._diagAcc >= 1.0) {
+            this._diagAcc = 0;
+            // 从累计计数推算出"上一秒新增"量：存一个快照在字段里
+            const prev = this._lastOneShotSnapshot;
+            const cur = this._oneShotTotal;
+            this._oneShotPerSec = cur - prev;
+            this._lastOneShotSnapshot = cur;
+        }
+    }
+
+    // ===== 音效 API =====
+    // 高频（持久源复用，降低 innerAudioContext churn）：射击/命中/击杀/受击/拾取/尖刺/冲刺
+    shoot(): void { this.playPersist('shoot', this.shootClip, 0.08); }
+    hit(): void { this.playPersist('hit', this.hitClip, 0.08); }
+    kill(): void { this.playPersist('kill', this.killClip, 0.12); }
+    hurt(): void { this.playPersist('hurt', this.hurtClip, 0.12); }
+    pickup(): void { this.playPersist('pickup', this.pickupClip, 0.08); }
+    spikeHit(): void { this.playPersist('spikeHit', this.spikeHitClip, 0.12); }
+    dash(): void { this.playPersist('shoot', this.shootClip, 0.08); }
+    // 低频（one-shot）：升级/爆炸/激光/激光预警/爆发/结算/点击
     levelup(): void { this.play('levelup', this.levelupClip); }
     explosion(): void { this.play('explosion', this.explosionClip); }
     laser(): void { this.play('laser', this.laserClip); }
     laserWarn(): void { this.play('laserWarn', this.laserWarnClip); }
     burst(): void { this.play('burst', this.burstClip); }
     gameover(): void { this.play('gameover', this.gameoverClip); }
-    spikeHit(): void { this.play('spikeHit', this.spikeHitClip, 0.12); }
     click(): void { this.play('click', this.clickClip, 0.04); }
-    dash(): void { this.play('shoot', this.shootClip, 0.02); }
 }

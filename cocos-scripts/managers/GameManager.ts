@@ -620,7 +620,20 @@ export class GameManager extends Component {
             const entN = this.entityManager ? this.entityManager.children.length : -1;
             const wm = this.worldManager as any;
             const terrN = wm && wm._terrainNodes ? wm._terrainNodes.length : -1;
-            console.log(`[Clownfish] PLAYING t=${this.playTime.toFixed(1)}s wave=${this.spawnManager?.wave ?? 0} entities=${entN} terrainSprites=${terrN}`);
+            // 实体分类计数：子弹/拾取物/敌人（追踪是否失控增长）
+            let bullets = 0, pickups = 0, enemies = 0;
+            if (this.entityManager) {
+                for (const c of this.entityManager.children) {
+                    if (!c.isValid) continue;
+                    if (c.getComponent('Bullet')) bullets++;
+                    else if (c.getComponent('Pickup')) pickups++;
+                    else if (c.getComponent('EnemyAI') || c.getComponent('EliteAI') || c.getComponent('BossAI')) enemies++;
+                }
+            }
+            const am = this.audioManager as any;
+            const sfx1s = am && typeof am.oneShotPerSec === 'number' ? am.oneShotPerSec : -1;
+            const sfxTot = am && typeof am.oneShotTotal === 'number' ? am.oneShotTotal : -1;
+            console.log(`[Clownfish] PLAYING t=${this.playTime.toFixed(1)}s wave=${this.spawnManager?.wave ?? 0} entities=${entN}(bullets=${bullets} pickups=${pickups} enemies=${enemies}) terrainSprites=${terrN} sfx1s=${sfx1s} sfxTot=${sfxTot}`);
         }
 
         // 更新地形冷却

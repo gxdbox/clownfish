@@ -14,7 +14,15 @@
 4. 每个分包 root 下放占位 game.js（微信开发者工具模拟器硬校验:
    "未找到 subpackages[i].root 对应的 game.js"，运行时不会执行它）
 5. src/settings.json: assets.subpackages 列表（引擎加载 bundle 前先 wx.loadSubpackage）
-6. project.config.json: appid（工具 leveldb 项目记录已同步修正，此处双保险）
+6. 分包 bundle 的 prerequisite-imports 注册注入主包 game.js：
+   Cocos 引擎在 loadBundle(<name>) 创建 bundle 时无条件 import('virtual:///prerequisite-imports/<name>')
+   （见 engine/cocos/asset/asset-manager/factory.ts createBundle）。
+   该模块只 System.register 在分包 bundle 的 index.js 里，而微信运行时从不执行分包 JS
+   （分包分支只 loadSubpackage + 读 config.json，不 require index.js）
+   → 不注入则报 "Unable to instantiate virtual:///prerequisite-imports/<name> from undefined"，
+   这正是分包后 BGM 全静音的根因。修复：把 subpackages/<name>/index.js 的注册代码
+   搬到主包 game.js（system.bundle.js require 之后，此时 SystemJS 全局可用）。
+7. project.config.json: appid（工具 leveldb 项目记录已同步修正，此处双保险）
 """
 import json
 import os
@@ -29,6 +37,43 @@ SUBROOT = 'subpackages'
 SUBPACKAGES = ['bgm']
 PLACEHOLDER = ('// 分包占位入口：微信开发者工具校验 subpackages[].root 下必须存在 game.js；\n'
                '// 运行时不会被执行（小游戏唯一入口是主包 game.js），仅用于通过编译/预览校验。\n')
+# 主包 game.js 中 SystemJS 加载完成后的注入锚点
+GAME_JS_SYSTEMJS_ANCHOR = 'require("src/system.bundle.js");'
+INJECT_MARKER = '// <clownfish: injected subpackage bundle registrations>'
+
+
+def inject_subpackage_registrations(b: str, names: list[str]) -> None:
+    """把分包 bundle index.js 里的 System.register 注册代码搬到主包 game.js。
+
+    Cocos 引擎 loadBundle(<name>) 时 import('virtual:///prerequisite-imports/<name>')，
+    该模块只注册在分包目录的 index.js 里，微信运行时不会执行分包 JS → 必须搬到主包。
+    """
+    gp = os.path.join(b, 'game.js')
+    if not os.path.isfile(gp):
+        return
+    js = open(gp, encoding='utf-8').read()
+    if INJECT_MARKER in js:
+        return  # 幂等：已注入过
+    reg = []
+    for name in names:
+        idx = os.path.join(b, SUBROOT, name, 'index.js')
+        if os.path.isfile(idx):
+            reg.append(open(idx, encoding='utf-8').read())
+    if not reg:
+        return
+    body = '\n'.join(ln for src in reg for ln in src.splitlines())
+    block = (f'\n{INJECT_MARKER}\n'
+             '(function () {\n'
+             '    try {\n'
+             + '\n'.join('        ' + ln for ln in body.splitlines()) + '\n'
+             '    } catch (e) { console.warn("[Clownfish] subpackage reg inject:", e); }\n'
+             '})();\n')
+    if GAME_JS_SYSTEMJS_ANCHOR in js:
+        js = js.replace(GAME_JS_SYSTEMJS_ANCHOR, GAME_JS_SYSTEMJS_ANCHOR + block, 1)
+    else:
+        js = js.replace('function __initApp () {', 'function __initApp () {' + block, 1)
+    open(gp, 'w', encoding='utf-8').write(js)
+    print(f'  injected {len(names)} subpackage registration(s) into game.js')
 
 
 def main() -> int:
@@ -80,6 +125,10 @@ def main() -> int:
     c = json.load(open(pc))
     c['appid'] = APPID
     json.dump(c, open(pc, 'w'), indent=2, ensure_ascii=False)
+
+    # 6. 分包 bundle 的 prerequisite-imports 注册注入主包（必须：微信不执行分包 JS，
+    #    否则 loadBundle('bgm') 报 Unable to instantiate virtual:///prerequisite-imports/bgm）
+    inject_subpackage_registrations(b, SUBPACKAGES)
 
     # 尺寸核算（stat 实际字节；du 会因磁盘块虚高）
     def sz(root: str, skip=()) -> int:

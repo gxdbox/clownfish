@@ -4,3 +4,6 @@
 .tmp_*
 .wx_auto/
 .DS_Store
+
+# Cocos 构建器临时产物
+*.ccc

@@ -48,6 +48,7 @@ export class Pickup extends Component {
             shield: 'sprites/shieldPickup',
             range: 'sprites/rangePickup',
             boost: 'sprites/boostPickup',
+            bomb: 'sprites/bombPickup',   // 炸弹（无素材时走 Graphics 兜底）
         };
         if (sprite) {
             const path = frameMap[this.type];
@@ -80,6 +81,7 @@ export class Pickup extends Component {
             shield: PICKUP.SHIELD_RADIUS,
             range: PICKUP.RANGE_RADIUS,
             boost: PICKUP.BOOST_RADIUS,
+            bomb: PICKUP.BOMB_RADIUS,
         };
         const colorMap: Record<string, Color> = {
             gem: new Color(80, 225, 255, 255),
@@ -89,6 +91,7 @@ export class Pickup extends Component {
             shield: new Color(90, 150, 255, 255),
             range: new Color(200, 120, 255, 255),
             boost: new Color(110, 255, 150, 255),
+            bomb: new Color(255, 140, 30, 255),  // 炸弹：橙红，醒目
         };
         const r = radiusMap[this.type] ?? PICKUP.GEM_RADIUS;
         const c = colorMap[this.type] ?? new Color(255, 255, 255, 255);
@@ -98,7 +101,22 @@ export class Pickup extends Component {
         g.fillColor = c;
         g.circle(0, 0, r);
         g.fill();
-        if (this.type === 'gem' || this.type === 'bigGem') {
+        if (this.type === 'bomb') {
+            // 炸弹视觉：黑球 + 引信 + 火星（简单可辨）
+            g.fillColor = new Color(30, 30, 30, 255);
+            g.circle(0, 0, r * 0.85);
+            g.fill();
+            g.fillColor = new Color(255, 200, 80, 255);
+            g.moveTo(0, r * 0.8);
+            g.lineTo(r * 0.4, r * 1.35);
+            g.lineTo(r * 0.1, r * 1.2);
+            g.lineTo(0, r * 1.45);
+            g.close();
+            g.fill();
+            g.fillColor = new Color(255, 255, 255, 200);
+            g.circle(-r * 0.3, r * 0.25, r * 0.22);
+            g.fill();
+        } else if (this.type === 'gem' || this.type === 'bigGem') {
             g.fillColor = new Color(255, 255, 255, 220);
             g.moveTo(0, -r * 0.95);
             g.lineTo(r * 0.6, 0);
@@ -158,6 +176,11 @@ export class Pickup extends Component {
 
         if (this.type === 'gem' || this.type === 'bigGem') {
             player.addExp(this.value);
+        } else if (this.type === 'bomb') {
+            // 炸弹：交给 GameManager 触发全屏清场（视觉/音效/伤害/经验雨集中管理）
+            if (player.gameManager) {
+                player.gameManager.detonateBomb();
+            }
         } else {
             player.applyPickup(this.type);
             const msg: Record<string, string> = {

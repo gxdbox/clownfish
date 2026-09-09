@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -574,6 +574,115 @@ export class GameManager extends Component {
         for (const child of children) {
             child.destroy();
         }
+    }
+
+    // ===== 炸弹（绝境救赎：全屏清场小兵，精英/Boss 重创） =====
+
+    /** 引爆炸弹：全屏冲击波视觉 + 秒杀普通敌人 + 重创精英/Boss + 经验雨。
+     *  由 Pickup 拾取 bomb 时调用；爽点 = 压迫瞬间全屏清场 + 收割经验。 */
+    detonateBomb(): void {
+        if (this.state !== GameState.PLAYING) return;
+        const bm = BOMB;
+
+        // —— 视觉：全屏白光闪屏 + 冲击波圆环扩散（挂在 Canvas 下，UI 层可见）——
+        this._showBombFx();
+
+        // —— 音效 + 相机震动 ——
+        this.audioManager?.explosion();
+        this.cameraFollow?.addShake(16);
+
+        // —— 伤害结算：遍历 EntityManager 下所有敌人 ——
+        let killed = 0;
+        let stunnedMsg = '';
+        if (this.entityManager) {
+            const children = this.entityManager.children.slice();
+            const px = this.playerController?.node.position.x ?? 0;
+            const py = this.playerController?.node.position.y ?? 0;
+            for (const child of children) {
+                // 普通敌人：秒杀（触发正常击杀掉落 → 经验雨）
+                const enemy = child.getComponent(EnemyAI);
+                if (enemy && enemy.node.active) {
+                    enemy.hurtEnemy(999999, px, py);
+                    killed++;
+                    continue;
+                }
+                // 精英：重创 50% 最大生命
+                const elite = child.getComponent(EliteAI);
+                if (elite && elite.node.active) {
+                    elite.hurtEnemy(Math.max(1, Math.round(elite.maxHp * bm.ELITE_DMG_RATIO)), px, py);
+                    killed++;
+                    continue;
+                }
+                // Boss：重创 10% 最大生命
+                const boss = child.getComponent(BossAI);
+                if (boss && boss.node.active) {
+                    boss.hurtEnemy(Math.max(1, Math.round(boss.maxHp * bm.BOSS_DMG_RATIO)), px, py);
+                    killed++;
+                }
+            }
+        }
+
+        this.notify(killed > 0
+            ? `💣 轰——！全屏清场 ${killed} 个敌人！`
+            : '💣 轰——！（附近没有敌人）');
+        console.log(`[Clownfish] 炸弹引爆: 命中 ${killed} 个目标`);
+    }
+
+    /** 炸弹视觉：全屏白光闪屏 + 冲击波圆环扩散（用 Graphics 在 Canvas 下画，UI 层可见） */
+    private _showBombFx(): void {
+        const canvas = this.node.scene?.getChildByName('Canvas') ?? this.node;
+        if (!canvas) return;
+        const bm = BOMB;
+
+        // 1) 全屏白色闪屏（半透明白覆盖全屏，快速淡出）
+        const flash = new Node('BombFlash');
+        flash.layer = Layers.Enum.UI_2D;
+        canvas.addChild(flash);
+        flash.setSiblingIndex(canvas.children.length - 1);
+        const fut = flash.addComponent(UITransform);
+        const vs = view.getVisibleSize();
+        fut.setContentSize(vs.width, vs.height);
+        const fg = flash.addComponent(Graphics);
+        fg.fillColor = new Color(255, 255, 255, 220);
+        fg.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
+        fg.fill();
+        // 淡出动画
+        let fAge = 0;
+        const fTick = (dt: number): void => {
+            fAge += dt;
+            const t = fAge / bm.SCREEN_FLASH;
+            if (t >= 1) { flash.destroy(); return; }
+            fg.fillColor = new Color(255, 255, 255, Math.floor(220 * (1 - t)));
+            fg.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
+            fg.fill();
+            this.scheduleOnce(() => fTick(dt), dt);
+        };
+        fTick(0.016);
+
+        // 2) 冲击波圆环：从玩家位置扩散（世界层，挂在 EntityManager 同层）
+        const ppos = this.playerController?.node.position ?? new Node().position;
+        const wave = new Node('BombWave');
+        wave.setPosition(ppos.x, ppos.y, 0);
+        if (this.entityManager) {
+            this.entityManager.addChild(wave);
+        } else {
+            this.node.scene?.addChild(wave);
+        }
+        const wg = wave.addComponent(Graphics);
+        let wAge = 0;
+        const wTick = (dt: number): void => {
+            wAge += dt;
+            const t = wAge / bm.SHOCKWAVE_TIME;
+            if (t >= 1) { wave.destroy(); return; }
+            const r = bm.SHOCKWAVE_MAX_R * (0.2 + 0.8 * t);
+            wg.clear();
+            wg.lineWidth = bm.SHOCKWAVE_WIDTH;
+            wg.strokeColor = new Color(255, 200, 90, Math.floor(255 * (1 - t)));
+            wg.circle(0, 0, r);
+            wg.stroke();
+            this.scheduleOnce(() => wTick(dt), dt);
+        };
+        wTick(0.016);
     }
 
     // ===== 通知 =====

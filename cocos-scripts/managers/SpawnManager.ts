@@ -6,7 +6,7 @@
  */
 import { _decorator, Component, Node, Prefab, instantiate, view } from 'cc';
 import { rand, clamp } from '../util';
-import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, BOSS, MAPS, GameState } from '../config';
+import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, BOSS, MAPS, GameState, BOMB } from '../config';
 import type { WorldManager } from './WorldManager';
 import type { AudioManager } from './AudioManager';
 import type { GameManager } from './GameManager';
@@ -41,6 +41,10 @@ export class SpawnManager extends Component {
     kills = 0;
     bossActive = false;        // Boss 战中：暂停普通/精英生成，聚焦战斗
     currentBoss: BossAI | null = null;
+
+    // ===== 炸弹绝境保底 =====
+    private _desperateTimer = 0;   // 场上敌人数量持续过高的计时
+    private _lastEnemyCount = 0;   // 上一秒敌人数量快照（判断"没减少"）
 
     private _entityManager: Node | null = null;
     private _player: PlayerController | null = null;
@@ -93,6 +97,10 @@ export class SpawnManager extends Component {
             if (this.wave % WAVE.NOTE_EVERY === 0) {
                 this.gameManager?.notify(`⚠ 第 ${this.wave} 波：敌人显著增强了！`);
             }
+            // 波次结算：每 N 波概率掉一个炸弹（波次奖励）
+            if (this.wave % BOMB.WAVE_EVERY === 0 && Math.random() < BOMB.WAVE_CHANCE) {
+                this._spawnBombNearPlayer();
+            }
             // Boss 出场：本图推进到指定波次后登场
             const mapIndex = this.gameManager?.mapIndex ?? 0;
             if (this.mapWave >= MAPS[mapIndex % MAPS.length].bossWave) {
@@ -100,6 +108,9 @@ export class SpawnManager extends Component {
                 return;
             }
         }
+
+        // 绝境保底：场上敌人 ≥ 阈值 且持续未减少 → 玩家旁刷炸弹（"天降救兵"）
+        this._updateDesperateBomb(dt);
 
         // 普通敌人生成
         this.spawnTimer -= dt;
@@ -181,6 +192,50 @@ export class SpawnManager extends Component {
         x = clamp(x, 60, WORLD.SIZE - 60);
         y = clamp(y, 60, WORLD.SIZE - 60);
         return { x, y };
+    }
+
+    // ===== 炸弹掉落（波次奖励 / 精英掉落 / 绝境保底） =====
+
+    /** 玩家附近生成一个炸弹拾取物 */
+    private _spawnBombNearPlayer(): void {
+        if (!this._entityManager || !this._player) return;
+        const ppos = this._player.node.position;
+        // 在玩家附近随机位置（150-320px），可见可够到
+        const a = Math.random() * Math.PI * 2;
+        const r = 150 + Math.random() * 170;
+        const x = clamp(ppos.x + Math.cos(a) * r, 60, WORLD.SIZE - 60);
+        const y = clamp(ppos.y + Math.sin(a) * r, 60, WORLD.SIZE - 60);
+        this._spawnPickupAt(x, y, 'bomb', 0);
+        this.gameManager?.notify('💣 炸弹出现了！捡起来轰飞全场！');
+        console.log(`[Clownfish] 炸弹掉落 @(${x.toFixed(0)}, ${y.toFixed(0)})`);
+    }
+
+    /** 绝境保底检测：场上敌人数量 ≥ 阈值 且 持续超过秒数没减少 → 玩家旁刷炸弹 */
+    private _updateDesperateBomb(dt: number): void {
+        if (!this._entityManager || !this._player) return;
+        if (this.bossActive) return; // Boss 战不打乱节奏
+        const count = this._countEnemies();
+        // 每秒采样一次（滚动计时），判断"持续未减少"
+        this._desperateTimer += dt;
+        if (this._desperateTimer >= 1.0) {
+            const notReduced = count >= this._lastEnemyCount;
+            this._lastEnemyCount = count;
+            this._desperateTimer = 0;
+            if (count >= BOMB.DESPERATE_THRESHOLD && notReduced) {
+                // 已经持续过阈值 + 没减少 → 触发保底
+                this._spawnBombNearPlayer();
+            }
+        }
+    }
+
+    /** 统计场上普通+精英敌人数量（不含 Boss） */
+    private _countEnemies(): number {
+        if (!this._entityManager) return 0;
+        let n = 0;
+        for (const c of this._entityManager.children) {
+            if (c.active && (c.getComponent('EnemyAI') || c.getComponent('EliteAI'))) n++;
+        }
+        return n;
     }
 
     /** 生成一个精英敌人 */
@@ -301,6 +356,11 @@ export class SpawnManager extends Component {
         this._spawnGems(pos.x, pos.y, 8, 90);
         // 精英必掉大血球 + 高概率额外掉落
         this._spawnBigGem(pos.x, pos.y);
+        // 精英低概率掉炸弹（惊喜感）
+        if (Math.random() < BOMB.ELITE_CHANCE) {
+            this._spawnPickupAt(pos.x, pos.y, 'bomb', 0);
+            this.gameManager?.notify('💣 精英掉落了炸弹！');
+        }
     }
 
     /** 溅射生成经验宝石（零素材兼容：无 pickupPrefab 时走自举节点，不能因缺预制体而断绝经验来源） */

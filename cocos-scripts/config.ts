@@ -97,6 +97,7 @@ export const PICKUP = {
     HP_RADIUS: 10,
     HP_BIG_RADIUS: 13,
     SHIELD_RADIUS: 12,
+    BOMB_RADIUS: 14,          // 炸弹拾取物半径
     GEM_VALUE: 1,
     BIG_GEM_VALUE: 20,
     RANGE_BONUS: 0.25,        // 范围+25%(永久)
@@ -109,6 +110,25 @@ export const PICKUP = {
     FLY_ACCEL: 900,
     DESPAWN_TIME: 120,        // 拾取物消失时间(秒)
     BIG_GEM_DROP_RADIUS: 140  // 精英宝石溅射半径
+};
+
+// ===== 炸弹（绝境救赎道具：全屏清场小兵，Boss 重创） =====
+export const BOMB = {
+    // 掉落概率
+    WAVE_CHANCE: 0.40,          // 每 5 波结算：40% 掉一个炸弹
+    WAVE_EVERY: 5,              // 每 N 波结算一次
+    ELITE_CHANCE: 0.25,         // 精英死亡：25% 掉炸弹
+    // 绝境保底：场上敌人 ≥ 阈值 且 持续超过 SECONDS 没减少 → 玩家旁边刷一个
+    DESPERATE_THRESHOLD: 22,    // 场上敌人数量阈值
+    DESPERATE_SECONDS: 8,       // 持续秒数
+    // 效果
+    SCREEN_FLASH: 0.35,         // 全屏白光时长(秒)
+    SHOCKWAVE_TIME: 0.6,        // 冲击波扩散时长(秒)
+    SHOCKWAVE_MAX_R: 1400,      // 冲击波最大半径(px，覆盖全屏)
+    SHOCKWAVE_WIDTH: 6,         // 冲击波圆环线宽
+    ELITE_DMG_RATIO: 0.5,       // 精英受炸弹伤害比例（50% 最大生命）
+    BOSS_DMG_RATIO: 0.10,       // Boss 受炸弹伤害比例（10% 最大生命）
+    MINION_XP_MULT: 1.5,        // 被炸弹秒杀的敌人经验倍率（收割更爽）
 };
 
 // ===== 击杀掉落概率表 =====

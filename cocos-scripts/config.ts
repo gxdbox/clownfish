@@ -158,7 +158,15 @@ export const TERRAIN = {
     URCHIN_DAMAGE: 14,        // 海胆伤害（比尖刺高）
     URCHIN_COOLDOWN: 1.0,     // 海胆受伤冷却(秒)
     DECAL_COUNT: 70,          // 海底装饰数量（珊瑚/海星/贝壳/骷髅）
-    SAFE_RADIUS: 220          // 出生点周围安全区半径
+    SAFE_RADIUS: 220,         // 出生点周围安全区半径
+};
+
+// ===== Boss 战围栏（Boss 出场时生成方形围栏，把玩家和 Boss 关在同一空间，防止玩家跑图甩掉 Boss） =====
+export const ARENA = {
+    HALF: 620,                // 围栏半边长(px)，以 Boss 出生点为中心（两边各留 1200px 战斗空间）
+    THICKNESS: 26,            // 围栏墙厚度(px)
+    // 围栏墙离 Boss 出生点的偏移（4 面：上/下/左/右，墙中心坐标 = Boss 中心 + 偏移 ± HALF）
+    OFFSET: 620,
 };
 
 // ===== 状态机 =====

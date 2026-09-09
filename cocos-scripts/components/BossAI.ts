@@ -112,6 +112,9 @@ export class BossAI extends Component {
         this.node.active = true;
         this._ensureVisual();
         this._ensureWarnNode();
+        // Boss 战围栏：以 Boss 为中心生成 4 面围墙，把玩家和 Boss 关在同一空间，
+        // 防止玩家甩开 Boss（地图 4000×4000 太大，不围栏可以跑图拖死 Boss 战）。
+        this.worldManager?.spawnArena(x, y);
     }
 
     /** Boss 视觉：优先 AI 精灵素材，失败回退 Graphics 大圆 */
@@ -487,6 +490,8 @@ export class BossAI extends Component {
     private _kill(): void {
         if (!this._active) return;
         this._active = false;
+        // Boss 死亡：移除战斗围栏（放玩家出去，并清空 Boss 专属碰撞墙）
+        this.worldManager?.removeArena();
         this.node.active = false;
         // 销毁而非仅停用：避免死节点占内存导致内存泄漏闪退
         this.node.destroy();

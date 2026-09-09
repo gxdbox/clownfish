@@ -246,6 +246,10 @@ export class AudioManager extends Component {
     private _playBgmClip(clip: AudioClip): void {
         if (!clip) return;
         try {
+            // 关键：真正播放 AI 素材前，必须先停掉 WebAudio 程序化兜底 BGM，
+            // 否则素材晚到补播时两套 BGM（合成器 + AI 素材）叠加混音。
+            this._stopBgmSynth();
+
             // 换歌 = 销毁旧 BGMAudio 节点 + 重建全新 AudioSource：
             // 1) 避免 stop() 后 m4a 触发 seek(0)（微信 dev 工具反复 stop/seek 不稳）
             // 2) 引擎 clip 切换时本来就重建 player，主动销毁更干净
@@ -271,6 +275,29 @@ export class AudioManager extends Component {
             const msg = e instanceof Error ? e.message : String(e);
             console.error('[Clownfish] BGM 播放异常:', msg);
             this._showAudioTip('BGM播放异常 ' + msg);
+        }
+    }
+
+    /** 停掉 WebAudio 程序化兜底 BGM（oscillator 全部 stop + gain 断开），
+     *  在真正播放 AI 素材 BGM 时调用，杜绝两套 BGM 叠加混音。 */
+    private _stopBgmSynth(): void {
+        if (!this._bgmCtx) return;
+        try {
+            if (this._bgmGain) {
+                this._bgmGain.gain.setTargetAtTime(0.0001, this._bgmCtx.currentTime, 0.2);
+                try { this._bgmGain.disconnect(); } catch { /* 忽略 */ }
+            }
+            // 记录所有已启动的 oscillator 逐个 stop（找不到引用则整体 close context）
+            try {
+                if (typeof this._bgmCtx.close === 'function') {
+                    this._bgmCtx.close();
+                }
+            } catch { /* 已关闭则忽略 */ }
+        } catch (e) {
+            console.warn('[Clownfish] 停止兜底 BGM 异常:', e instanceof Error ? e.message : String(e));
+        } finally {
+            this._bgmCtx = null;
+            this._bgmGain = null;
         }
     }
 

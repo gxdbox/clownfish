@@ -6,7 +6,7 @@
  */
 import { _decorator, Component, Graphics, Color, Node, Layers } from 'cc';
 import { clamp, rand, dist2, rectOverlap, loadSpriteOnto } from '../util';
-import { WORLD, PLAYER, TERRAIN, RENDER, MAPS, SPRITES } from '../config';
+import { WORLD, PLAYER, TERRAIN, RENDER, MAPS, SPRITES, ARENA } from '../config';
 const { ccclass, property } = _decorator;
 
 // ===== 空间哈希 =====
@@ -66,6 +66,10 @@ export class WorldManager extends Component {
     private _gfx: Graphics | null = null;
     /** 已创建的地形精灵宿主节点（每次 renderTerrain 先清旧再建新，防跨地图堆积） */
     private _terrainNodes: Node[] = [];
+    /** Boss 战围栏节点（spawnArena 创建，removeArena 销毁；跨地图重置） */
+    private _arenaNodes: Node[] = [];
+    /** Boss 战围栏墙数据（spawnArena push 进 terrain.walls，removeArena 移除） */
+    private _arenaWalls: WallData[] = [];
 
     /** 当前地图索引（决定地形配色，0 珊瑚礁 / 1 深海 / 2 海底火山） */
     mapIndex = 0;
@@ -93,6 +97,8 @@ export class WorldManager extends Component {
     /** 生成全部地形数据（纯数据，不含 Node） */
     generateTerrain(): TerrainData {
         const T = TERRAIN;
+        // 重建地形前清掉 Boss 战围栏（换图/重开时防止旧围栏残留卡住玩家）
+        this.removeArena();
         const s = WORLD.SIZE;
         const cx = PLAYER.START_X, cy = PLAYER.START_Y;
         const safe2 = T.SAFE_RADIUS * T.SAFE_RADIUS;
@@ -346,6 +352,67 @@ export class WorldManager extends Component {
             if (n && n.isValid) n.destroy();
         }
         this._terrainNodes.length = 0;
+    }
+
+    // ===== Boss 战围栏 =====
+
+    /** 生成 Boss 战围栏：以 (cx,cy) 为中心生成 4 面方形围墙，
+     *  墙数据 push 进 terrain.walls（复用现有碰撞），并创建视觉节点。
+     *  调用方应在 Boss 出场时调用，Boss 击杀后调用 removeArena 移除。 */
+    spawnArena(cx: number, cy: number): void {
+        this.removeArena();
+        const T = ARENA;
+        const thick = T.THICKNESS;
+        const h = T.HALF;
+        // 围栏范围（中心±h），4 面墙：
+        //   顶墙 (y=cy+h)：x 从 cx-h 到 cx+h，横向
+        //   底墙 (y=cy-h)：横向
+        //   左墙 (x=cx-h)：y 从 cy-h 到 cy+h，纵向
+        //   右墙 (x=cx+h)：纵向
+        // 墙数据用"中心 + 尺寸"转成"左上角 + 宽高"（WallData 约定）
+        const walls: WallData[] = [
+            { x: cx - h, y: cy + h - thick / 2, w: h * 2, h: thick },          // 顶
+            { x: cx - h, y: cy - h - thick / 2, w: h * 2, h: thick },          // 底
+            { x: cx - h - thick / 2, y: cy - h, w: thick, h: h * 2 },          // 左
+            { x: cx + h - thick / 2, y: cy - h, w: thick, h: h * 2 },          // 右
+        ];
+        // 夹在世界范围内（地图小 / Boss 贴边时不越界）
+        for (const w of walls) {
+            w.x = clamp(w.x, 0, WORLD.SIZE - w.w);
+            w.y = clamp(w.y, 0, WORLD.SIZE - w.h);
+        }
+        this._arenaWalls = walls;
+        for (const w of walls) this.terrain.walls.push(w);
+        // 视觉：4 面围墙的 Graphics 色块（浅色描边，区别于普通礁石墙）
+        for (const w of walls) {
+            const host = new Node('ArenaWall');
+            host.setPosition(w.x + w.w / 2, w.y + w.h / 2, 0);
+            host.layer = Layers.Enum.DEFAULT;
+            this.node.addChild(host);
+            const g = host.addComponent(Graphics);
+            g.fillColor = new Color(120, 60, 200, 200);
+            g.rect(-w.w / 2, -w.h / 2, w.w, w.h);
+            g.fill();
+            g.lineWidth = 3;
+            g.strokeColor = new Color(220, 160, 255, 230);
+            g.rect(-w.w / 2, -w.h / 2, w.w, w.h);
+            g.stroke();
+            this._arenaNodes.push(host);
+        }
+        console.log(`[Clownfish] Boss 战围栏生成 @(${cx.toFixed(0)}, ${cy.toFixed(0)}) 半边长 ${h}px`);
+    }
+
+    /** 移除 Boss 战围栏（墙数据从 terrain.walls 移除 + 销毁视觉节点） */
+    removeArena(): void {
+        if (this._arenaWalls.length) {
+            // 从 terrain.walls 中按对象引用移除
+            this.terrain.walls = this.terrain.walls.filter(w => !this._arenaWalls.includes(w));
+            this._arenaWalls.length = 0;
+        }
+        for (const n of this._arenaNodes) {
+            if (n && n.isValid) n.destroy();
+        }
+        this._arenaNodes.length = 0;
     }
 
     // ===== 空间哈希 =====

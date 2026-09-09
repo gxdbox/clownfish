@@ -150,7 +150,8 @@ export class SpawnManager extends Component {
         const mapIndex = this.gameManager?.mapIndex ?? 0;
         const map = MAPS[mapIndex % MAPS.length];
         const pool = map.enemies; // 该图出现的敌人类型索引
-        const pos = this._getSpawnPos();
+        // 从玩家四周包围生成：视野边缘一圈内随机方向（不再是 720px 外的远处单点）
+        const pos = this._getEncirclementPos();
         const type = pool[Math.floor(Math.random() * pool.length)];
 
         const node = this._createEntityNode(this.enemyPrefab, 'Enemy');
@@ -163,6 +164,23 @@ export class SpawnManager extends Component {
             ai.player = this._player;
             ai.init(pos.x, pos.y, this.wave, type, map.enemyHpMult);
         }
+    }
+
+    /** 生成位置：玩家视野边缘一圈内随机方向（包围感），
+     *  比旧 SPAWN_DIST=720（视野外远处单点）更集中、敌人可见地从四面八方压上来。 */
+    private _getEncirclementPos(): { x: number; y: number } {
+        const ppos = this._player!.node.position;
+        const vw = view.getVisibleSize().width;
+        const vh = view.getVisibleSize().height;
+        // 以视野短半轴为基准 + 偏移：敌人出生即进入/贴近玩家视野
+        const dist = Math.min(vw, vh) / 2 + ENEMY.SPAWN_OFFSET;
+        // 围绕玩家均匀分布角度，让多只怪从不同方向包围，而不是挤在同一个方向
+        const angle = Math.random() * Math.PI * 2;
+        let x = ppos.x + Math.cos(angle) * dist;
+        let y = ppos.y + Math.sin(angle) * dist;
+        x = clamp(x, 60, WORLD.SIZE - 60);
+        y = clamp(y, 60, WORLD.SIZE - 60);
+        return { x, y };
     }
 
     /** 生成一个精英敌人 */

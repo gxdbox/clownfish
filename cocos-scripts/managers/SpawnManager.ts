@@ -363,6 +363,20 @@ export class SpawnManager extends Component {
         }
     }
 
+    /** 补发经验宝石（炸弹秒杀敌人时的倍率差额经验；按宝石价值折算数量） */
+    spawnBonusGems(x: number, y: number, xp: number): void {
+        if (!this._entityManager || xp <= 0) return;
+        const n = Math.max(1, Math.round(xp / PICKUP.GEM_VALUE));
+        // 少量溅射在敌人周围
+        for (let i = 0; i < n; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.random() * 40;
+            const gx = clamp(x + Math.cos(a) * r, 20, WORLD.SIZE - 20);
+            const gy = clamp(y + Math.sin(a) * r, 20, WORLD.SIZE - 20);
+            this._spawnPickupAt(gx, gy, 'gem', PICKUP.GEM_VALUE);
+        }
+    }
+
     /** 溅射生成经验宝石（零素材兼容：无 pickupPrefab 时走自举节点，不能因缺预制体而断绝经验来源） */
     private _spawnGems(x: number, y: number, count: number, radius: number = 70): void {
         if (!this._entityManager) return;

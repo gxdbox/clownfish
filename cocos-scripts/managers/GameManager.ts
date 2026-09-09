@@ -602,7 +602,13 @@ export class GameManager extends Component {
                 // 普通敌人：秒杀（触发正常击杀掉落 → 经验雨）
                 const enemy = child.getComponent(EnemyAI);
                 if (enemy && enemy.node.active) {
+                    // 炸弹秒杀补发经验：在触发正常击杀掉落之前，先记下 xp（倍率留给掉落）
+                    const xpBonus = Math.round(enemy.xp * (BOMB.MINION_XP_MULT - 1));
                     enemy.hurtEnemy(999999, px, py);
+                    if (xpBonus > 0 && this.spawnManager) {
+                        // 补发额外经验宝石（掉落已在 onEnemyKilled 处理，这里补倍率差额）
+                        this.spawnManager.spawnBonusGems(enemy.node.position.x, enemy.node.position.y, xpBonus);
+                    }
                     killed++;
                     continue;
                 }
@@ -628,7 +634,7 @@ export class GameManager extends Component {
         console.log(`[Clownfish] 炸弹引爆: 命中 ${killed} 个目标`);
     }
 
-    /** 炸弹视觉：全屏白光闪屏 + 冲击波圆环扩散（用 Graphics 在 Canvas 下画，UI 层可见） */
+    /** 炸弹视觉：全屏白光闪屏 + 冲击波圆环扩散 + 碎片飞溅粒子（用 Graphics 在 Canvas 下画，UI 层可见） */
     private _showBombFx(): void {
         const canvas = this.node.scene?.getChildByName('Canvas') ?? this.node;
         if (!canvas) return;
@@ -683,6 +689,78 @@ export class GameManager extends Component {
             this.scheduleOnce(() => wTick(dt), dt);
         };
         wTick(0.016);
+
+        // 3) 碎片飞溅粒子：从玩家位置向四周喷射彩色碎片（小矩形，带重力/衰减/旋转）
+        this._spawnDebris(ppos.x, ppos.y);
+    }
+
+    /** 碎片飞溅粒子：爆炸时向四周喷几十颗彩色碎片，带重力下落 + 速度衰减 + 旋转，纯 Graphics 轻量实现 */
+    private _spawnDebris(cx: number, cy: number): void {
+        const parent = this.entityManager ?? this.node.scene;
+        if (!parent) return;
+        const COUNT = 36;
+        const COLORS = [
+            new Color(255, 160, 60, 255),   // 橙
+            new Color(255, 220, 90, 255),   // 黄
+            new Color(255, 100, 100, 255),  // 红
+            new Color(255, 255, 255, 255),  // 白
+        ];
+        interface Debris { node: Node; g: Graphics; vx: number; vy: number; rot: number; life: number; maxLife: number; size: number; }
+        const list: Debris[] = [];
+
+        for (let i = 0; i < COUNT; i++) {
+            const d = new Node('BombDebris');
+            d.setPosition(cx, cy, 0);
+            parent.addChild(d);
+            const g = d.addComponent(Graphics);
+            // 随机方向 + 速度 300-700
+            const a = Math.random() * Math.PI * 2;
+            const spd = 300 + Math.random() * 400;
+            const size = 3 + Math.random() * 5;
+            const maxLife = 0.5 + Math.random() * 0.4;
+            const c = COLORS[Math.floor(Math.random() * COLORS.length)];
+            g.fillColor = c;
+            g.rect(-size / 2, -size / 2, size, size);
+            g.fill();
+            list.push({
+                node: d, g,
+                vx: Math.cos(a) * spd,
+                vy: Math.sin(a) * spd - 120,  // 轻微上抛
+                rot: (Math.random() - 0.5) * 720,
+                life: 0,
+                maxLife,
+                size,
+            });
+        }
+
+        // 每帧更新：重力下落 + 速度衰减 + 旋转 + 淡出销毁
+        let age = 0;
+        const tick = (dt: number): void => {
+            age += dt;
+            if (age >= 1.0) {  // 最长 1 秒自动清理（防残留）
+                for (const d of list) { if (d.node.isValid) d.node.destroy(); }
+                return;
+            }
+            for (const d of list) {
+                d.life += dt;
+                const t = d.life / d.maxLife;
+                if (t >= 1) { if (d.node.isValid) d.node.destroy(); continue; }
+                d.vy -= 700 * dt;             // 重力
+                d.vx *= Math.pow(0.4, dt);    // 速度衰减
+                d.vy *= Math.pow(0.4, dt);
+                const p = d.node.position;
+                d.node.setPosition(p.x + d.vx * dt, p.y + d.vy * dt, p.z);
+                d.node.setRotationFromEuler(0, 0, d.node.eulerAngles.z + d.rot * dt);
+                d.g.clear();
+                d.g.fillColor = new Color(255, 255, 255, Math.floor(255 * (1 - t)));
+                // 碎片缩小淡出
+                const s = d.size * (1 - t * 0.7);
+                d.g.rect(-s / 2, -s / 2, s, s);
+                d.g.fill();
+            }
+            this.scheduleOnce(() => tick(dt), dt);
+        };
+        tick(0.016);
     }
 
     // ===== 通知 =====

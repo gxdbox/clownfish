@@ -110,6 +110,7 @@ export class AudioManager extends Component {
     private _bgmStarted = false;
     private _currentBgm: BgmKey | null = null; // 当前正在播的 BGM
     private _pendingBgm: BgmKey | null = null; // 素材未加载完成时挂起的待播 BGM
+    private _commitScheduled = false;          // 帧末统一提交已排期（防同帧多次切歌/补播竞态）
     private readonly BGM_VOLUME = 0.06;
 
     get muted(): boolean { return this._muted; }
@@ -139,6 +140,55 @@ export class AudioManager extends Component {
         }
         this._bgmSource = bgmNode.getComponent(AudioSource) || bgmNode.addComponent(AudioSource);
         this._bgmSource.loop = true;
+
+        // 微信端内联音频审计（排查“多种 BGM 叠播”）：记录 BGM 相关 innerAudioContext 的
+        // create/play/stop/destroy 时间线 → USER_DATA_PATH/audio_audit.log（模拟器文件系统可读）+ console。
+        // 定位“同时存活的源”用；对游戏逻辑零侵入（只包方法不碰语义）。
+        try {
+            const wxg = (globalThis as any).wx as any;
+            if (wxg && typeof wxg.createInnerAudioContext === 'function' && !(wxg as any).__cfAa) {
+                (wxg as any).__cfAa = true;
+                const origCreate = wxg.createInnerAudioContext.bind(wxg);
+                const t0 = Date.now();
+                const fsm = typeof wxg.getFileSystemManager === 'function' ? wxg.getFileSystemManager() : null;
+                const logPath = (wxg.env && wxg.env.USER_DATA_PATH ? wxg.env.USER_DATA_PATH + '/audio_audit.log' : '');
+                const BGM_RE = /(menu|map1_coral|map2_deep|map3_volcano|boss|victory|defeat)\.m4a$/;
+                const alog = (s: string): void => {
+                    const line = `${Date.now() - t0}ms ${s}`;
+                    try {
+                        if (fsm && logPath && typeof fsm.appendFileSync === 'function') fsm.appendFileSync(logPath, line + '\n');
+                    } catch { /* 忽略 */ }
+                    console.log('[AA] ' + line);
+                };
+                let cnt = 0;
+                wxg.createInnerAudioContext = function (): any {
+                    const ctx = origCreate();
+                    if (!ctx) return ctx;
+                    const id = 'C' + (++cnt);
+                    const srcName = (): string => String(ctx.src || '').split('/').pop() || '';
+                    alog('CREATE ' + id + ' src=' + srcName());
+                    const wrapOn = (ev: string): void => {
+                        if (typeof ctx['on' + ev] !== 'function') return;
+                        const orig = ctx['on' + ev].bind(ctx);
+                        ctx['on' + ev] = (cb: any) => orig((...args: any[]) => {
+                            if (BGM_RE.test(srcName())) alog('EVT ' + id + ' on' + ev + ' src=' + srcName());
+                            try { if (typeof cb === 'function') cb(...args); } catch { /* 忽略 */ }
+                        });
+                    };
+                    wrapOn('Play'); wrapOn('Stop'); wrapOn('Ended'); wrapOn('Error'); wrapOn('Canplay');
+                    (['play', 'stop', 'pause', 'destroy'] as const).forEach((m) => {
+                        if (typeof ctx[m] !== 'function') return;
+                        const orig = ctx[m].bind(ctx);
+                        ctx[m] = (...args: any[]) => {
+                            if (BGM_RE.test(srcName())) alog('CALL ' + id + ' ' + m + ' src=' + srcName());
+                            return orig(...args);
+                        };
+                    });
+                    return ctx;
+                };
+                alog('AUDIO-AUDIT INSTALLED');
+            }
+        } catch { /* 非微信环境忽略 */ }
         // 自动加载音效素材（assets/resources/audio/ 同名文件，编辑器拖入过的属性优先跳过）
         for (const [key, name] of CLIP_SOURCES) {
             if ((this as any)[key]) continue;
@@ -185,38 +235,79 @@ export class AudioManager extends Component {
         });
     }
 
-    /** clip 加载完成：挂到属性；若正是当前挂起的待播 BGM 立即补播 */
+    /** clip 加载完成：挂到属性；若正是当前挂起的待播 BGM，排一次帧末补播 */
     private _onClipLoaded(key: string, clip: AudioClip): void {
         (this as any)[key] = clip;
-        // BGM 素材晚到时补播：若正是当前挂起的待播曲，立即切换
+        // BGM 素材晚到时补播：若正是当前挂起的待播曲，走统一的帧末提交（不直接切，
+        // 避免与用户同帧的切歌操作构成“先播后切”竞态 → 幽灵源叠播）
         const bgmKey = this._bgmKeyOfProp(key);
         if (bgmKey && this._bgmStarted && this._pendingBgm === bgmKey) {
-            this.playBgm(bgmKey);
+            this._scheduleCommit();
         }
     }
 
-    /** 首次用户交互时解锁音频（微信小游戏需要），并播默认主菜单 BGM */
+    /** 首次用户交互时解锁音频（微信小游戏需要）。
+     *  注意：这里不再自动播 menu BGM。startGame 会在同一用户手势内紧接着切地图 BGM，
+     *  若同帧“先播再停”会让引擎把首次 set clip 的源变成“幽灵源”（clip 需异步 decode，
+     *  play 被排队，旧节点的 stop 落在尚未 start 的源上不生效，节点销毁后源照样 start 并
+     *  loop 常响，且再无人 stop）→ menu 与 map1 两首 90s BGM 同时长响（叠播根因）。
+     *  需要 BGM 的界面（如菜单）应在解锁后自行 playBgm（此时无同帧竞争，切换安全）。 */
     unlock(): void {
         if (this._hardMute) return;
         if (this._bgmStarted) return;
         this._bgmStarted = true;
-        this.playBgm('menu');
     }
 
     /**
      * 背景音乐切换：切到指定场景曲（loop + 淡入）。
      * 素材未加载完成时挂起（_pendingBgm），加载回调会自动补播。
-     * 没有任何 AI 素材且 WebAudio 可用时，回退程序化合成的氛围 BGM 兜底。
+     * 没有任何 AI 素材且浏览器 WebAudio 可用时，回退程序化合成的氛围 BGM 兜底。
+     *
+     * 时序安全：所有“换歌”都只记录目标曲并排到帧末统一提交（_commitBgm）。
+     * 这样用户手势内的多次切歌与素材加载回调触发的补播不会落在同一帧——
+     * Cocos 3.8 对“同帧先播 A 再切 B”的源 stop 无效（clip 首次 set 后异步 decode，
+     * play 排队中，stop 落在尚未 start 的源上不生效，节点销毁后 pending start 照常
+     * 执行 → 幽灵源永远在响），帧末合并后同一时刻至多一个切换动作。
      */
     playBgm(key: BgmKey): void {
         if (!key || this._hardMute) return;
         this._bgmStarted = true;
-        if (key === this._currentBgm) { this._pendingBgm = null; return; }
+        if (key === this._currentBgm) {
+            this._pendingBgm = null;
+            // 若上一首切歌时 AI 素材已被停掉（切歌未遂后回切本曲），恢复素材播放
+            const clip = this._bgmClipOf(key);
+            if (clip && !this._bgmSource) this._playBgmClip(clip);
+            return;
+        }
         this._pendingBgm = key;
+        this._scheduleCommit();
+    }
+
+    /** 排一次帧末提交（同一帧内的多次切歌/补播请求合并为最后一次执行） */
+    private _scheduleCommit(): void {
+        if (this._commitScheduled) return;
+        this._commitScheduled = true;
+        this.scheduleOnce(() => {
+            this._commitScheduled = false;
+            this._commitBgm();
+        }, 0);
+    }
+
+    /** 帧末统一提交当前待播曲：停旧歌 → 素材就绪则播新歌，未就绪则挂起等补播 */
+    private _commitBgm(): void {
+        const key = this._pendingBgm;
+        if (!key) return;
+        if (key === this._currentBgm) {
+            this._pendingBgm = null;
+            return;
+        }
         const clip = this._bgmClipOf(key);
         if (!clip) {
-            // 素材未加载完成：等加载回调补播；WebAudio 可用时先合成氛围兜底
-            if (!this._bgmCtx) {
+            // 素材未加载完成：必须先停掉当前 AI 素材 BGM（否则旧歌 + 新歌叠两套 BGM），
+            // 等加载回调补播；浏览器环境 WebAudio 可用时先合成氛围兜底，微信小游戏
+            // 无 AudioContext 且素材最终必到，直接静音等待（避免多一重声音来源被误判为叠播）。
+            this._stopBgmClip();
+            if (!this._bgmCtx && this._canSynth()) {
                 try {
                     this._buildBgm();
                     if (this._bgmCtx && this._bgmCtx.state === 'suspended') this._bgmCtx.resume();
@@ -231,6 +322,11 @@ export class AudioManager extends Component {
         this._playBgmClip(clip);
     }
 
+    /** WebAudio 程序化兜底仅在浏览器（无 wx）启用：微信小游戏内不合成，避免与素材 BGM 混响 */
+    private _canSynth(): boolean {
+        return !(globalThis as any).wx;
+    }
+
     private _bgmClipOf(key: BgmKey): AudioClip | null {
         return (this as any)[BGM_PROP[key]] ?? null;
     }
@@ -242,22 +338,33 @@ export class AudioManager extends Component {
         return null;
     }
 
+    /** 停掉正在播放的 AI 素材 BGM（立即静音 + 销毁节点）。
+     *  active=false 立即停播（destroy() 是帧末才生效，同帧内连续换歌时旧节点不会继续出声），
+     *  随后 destroy 在帧末释放其 AudioSource/innerAudioContext。 */
+    private _stopBgmClip(): void {
+        const oldNode = this.node.getChildByName('BGMAudio');
+        if (!oldNode) return;
+        if (this._bgmSource) tween(this._bgmSource).stop();
+        const oldSrc = oldNode.getComponent(AudioSource);
+        if (oldSrc) {
+            oldSrc.volume = 0;   // 先静音再 stop，避免微信端 stop 触发 seek(0) 杂音
+            try { oldSrc.stop(); } catch { /* 忽略 */ }
+        }
+        oldNode.active = false;  // 立即停播（destroy 延迟到帧末）
+        oldNode.destroy();       // 帧末释放其 innerAudioContext
+        this._bgmSource = null;
+    }
+
     /** 播放指定 BGM clip：loop + 淡入 */
     private _playBgmClip(clip: AudioClip): void {
-        if (!clip) return;
+        if (!clip || !this.node.isValid) return;
         try {
             // 关键：真正播放 AI 素材前，必须先停掉 WebAudio 程序化兜底 BGM，
             // 否则素材晚到补播时两套 BGM（合成器 + AI 素材）叠加混音。
             this._stopBgmSynth();
 
-            // 换歌 = 销毁旧 BGMAudio 节点 + 重建全新 AudioSource：
-            // 1) 避免 stop() 后 m4a 触发 seek(0)（微信 dev 工具反复 stop/seek 不稳）
-            // 2) 引擎 clip 切换时本来就重建 player，主动销毁更干净
-            const oldNode = this.node.getChildByName('BGMAudio');
-            if (oldNode) {
-                tween(this._bgmSource).stop();
-                oldNode.destroy(); // 引擎会在帧末释放其 innerAudioContext
-            }
+            // 换歌 = 停掉旧 BGMAudio 节点 + 重建全新 AudioSource（见 _stopBgmClip 注释）
+            this._stopBgmClip();
             const bgmNode = new Node('BGMAudio');
             this.node.addChild(bgmNode);
             const src = bgmNode.addComponent(AudioSource);

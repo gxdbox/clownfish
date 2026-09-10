@@ -356,14 +356,29 @@ export class WorldManager extends Component {
 
     // ===== Boss 战围栏 =====
 
-    /** 生成 Boss 战围栏：以 (cx,cy) 为中心生成 4 面方形围墙，
+    /** 生成 Boss 战围栏：以「玩家与 Boss 的中点」为中心生成 4 面方形围墙，
+     *  半边长取 max(ARENA.HALF, 两点距/2 + ARENA.MARGIN)，保证玩家和 Boss 同时
+     *  被关在墙内（Boss 出生点距玩家 720px > 固定半边长 620px，若以 Boss 为中心
+     *  生成，玩家会落在墙外互相打不到）。
      *  墙数据 push 进 terrain.walls（复用现有碰撞），并创建视觉节点。
      *  调用方应在 Boss 出场时调用，Boss 击杀后调用 removeArena 移除。 */
-    spawnArena(cx: number, cy: number): void {
+    spawnArena(bx: number, by: number, px: number, py: number): void {
         this.removeArena();
         const T = ARENA;
         const thick = T.THICKNESS;
-        const h = T.HALF;
+        // 围栏中心 = 玩家与 Boss 中点（双方对称地留在墙内）
+        let cx = (bx + px) / 2;
+        let cy = (by + py) / 2;
+        // 需要的半边长：至少 ARENA.HALF，且能包住两点 + 战斗走位余量
+        const d = Math.sqrt((bx - px) * (bx - px) + (by - py) * (by - py));
+        let h = Math.max(T.HALF, d / 2 + T.MARGIN);
+        // 世界放不下时收缩（极端：地图过小 / 出生点贴边），保证墙不越界
+        const maxH = WORLD.SIZE / 2 - thick;
+        if (h > maxH) h = Math.max(maxH, thick * 2);
+        // 中心约束在世界内（四面墙整体在界内，不再逐面 clamp 破坏对称）
+        const minC = h + thick / 2;
+        cx = clamp(cx, minC, WORLD.SIZE - minC);
+        cy = clamp(cy, minC, WORLD.SIZE - minC);
         // 围栏范围（中心±h），4 面墙：
         //   顶墙 (y=cy+h)：x 从 cx-h 到 cx+h，横向
         //   底墙 (y=cy-h)：横向
@@ -376,11 +391,6 @@ export class WorldManager extends Component {
             { x: cx - h - thick / 2, y: cy - h, w: thick, h: h * 2 },          // 左
             { x: cx + h - thick / 2, y: cy - h, w: thick, h: h * 2 },          // 右
         ];
-        // 夹在世界范围内（地图小 / Boss 贴边时不越界）
-        for (const w of walls) {
-            w.x = clamp(w.x, 0, WORLD.SIZE - w.w);
-            w.y = clamp(w.y, 0, WORLD.SIZE - w.h);
-        }
         this._arenaWalls = walls;
         for (const w of walls) this.terrain.walls.push(w);
         // 视觉：4 面围墙的 Graphics 色块（浅色描边，区别于普通礁石墙）

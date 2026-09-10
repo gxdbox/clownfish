@@ -66,6 +66,12 @@ export class PlayerController extends Component {
     faceAngle = 0;
     dead = false;
 
+    // ===== 外部速度（Boss 技能等外力，如引力黑洞拉扯；每帧按 _externalDamp 衰减，
+    // 施力方需每帧重设才能持续，冲刺期间不生效以保留冲刺无敌穿越的爽感） =====
+    externalVelX = 0;
+    externalVelY = 0;
+    private static readonly EXTERNAL_DAMP = Math.pow(0.0001, 1 / 60); // 每帧衰减(≈1秒内归零)
+
     // ===== 冲刺状态 =====
     dashTimer = 0;                    // 冲刺进行中剩余时间(秒)
     dashCooldown = 0;                 // 当前冷却剩余(秒)
@@ -156,6 +162,8 @@ export class PlayerController extends Component {
         this.boostMult = 1;
         this.faceAngle = 0;
         this.dead = false;
+        this.externalVelX = 0;
+        this.externalVelY = 0;
         // 冲刺状态重置
         this.dashTimer = 0;
         this.dashCooldown = 0;
@@ -193,6 +201,7 @@ export class PlayerController extends Component {
             this._updateDash(dt);
         } else {
             this._updateMove(dt);
+            this._applyExternalVel(dt);
         }
         this._applySwim(dt);
     }
@@ -220,6 +229,26 @@ export class PlayerController extends Component {
             this.node.setPosition(cx, cy, pos.z);
             this.faceAngle = Math.atan2(iy, ix);
             this.node.setRotationFromEuler(0, 0, -this.faceAngle * 180 / Math.PI);
+        }
+    }
+
+    /** 外部速度（Boss 技能引力/推力）：叠加到玩家位置并快速衰减，撞墙/出界被解析 */
+    private _applyExternalVel(dt: number): void {
+        if (this.externalVelX === 0 && this.externalVelY === 0) return;
+        const pos = this.node.position;
+        const nx = pos.x + this.externalVelX * dt;
+        const ny = pos.y + this.externalVelY * dt;
+        const resolved = this.worldManager!.moveResolve(nx, ny, PLAYER.RADIUS);
+        this.node.setPosition(
+            clamp(resolved[0], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS),
+            clamp(resolved[1], PLAYER.RADIUS, WORLD.SIZE - PLAYER.RADIUS),
+            pos.z
+        );
+        this.externalVelX *= PlayerController.EXTERNAL_DAMP;
+        this.externalVelY *= PlayerController.EXTERNAL_DAMP;
+        if (Math.abs(this.externalVelX) + Math.abs(this.externalVelY) < 4) {
+            this.externalVelX = 0;
+            this.externalVelY = 0;
         }
     }
 

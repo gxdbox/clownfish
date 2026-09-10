@@ -183,8 +183,9 @@ export const TERRAIN = {
 
 // ===== Boss 战围栏（Boss 出场时生成方形围栏，把玩家和 Boss 关在同一空间，防止玩家跑图甩掉 Boss） =====
 export const ARENA = {
-    HALF: 620,                // 围栏半边长(px)，以 Boss 出生点为中心（两边各留 1200px 战斗空间）
+    HALF: 620,                // 围栏基础半边长(px)，以玩家与 Boss 中点为中心（两边各留 1240px 战斗空间）
     THICKNESS: 26,            // 围栏墙厚度(px)
+    MARGIN: 140,              // 玩家/Boss 到围栏边的走位余量(px)：半边长 = max(HALF, 两点距/2 + MARGIN)
     // 围栏墙离 Boss 出生点的偏移（4 面：上/下/左/右，墙中心坐标 = Boss 中心 + 偏移 ± HALF）
     OFFSET: 620,
 };
@@ -325,6 +326,85 @@ export const BOSS = {
     SUMMON_DIST: 380,           // 召唤位置距 BOSS 距离(px)
     SUMMON_WAVE_FALLBACK: 1,    // 拿不到全局波次时的兜底波次
 };
+
+// ===== BOSS 专属技能（差异化：每个世界的 Boss 拥有一套独有技能，按 MAPS 下标配置） =====
+// 技能与基础循环（追逐/弹幕交替/冲撞/狂暴/召唤）并存，独立 CD，与冲撞互斥（蓄力中不发新招）
+export interface BossSkillCfg {
+    announce: string;               // 首次释放时的玩家提示（后续不再刷屏）
+    slam?: {                        // 跳跃砸地（巨蟹王）：跃向玩家 → 落地冲击波
+        cd: number;                 //   冷却(秒)
+        windup: number;             //   蓄力时长(秒)（落点画红圈预警）
+        airTime: number;            //   空中飞行时长(秒)（落点=蓄力时锁定的玩家位置）
+        waveCount: number;          //   冲击波弹幕数量
+        waveSpeed: number;          //   冲击波弹速
+        range: number;              //   冲击波射程(px)
+        damage: number;             //   冲击波单发伤害
+    };
+    orbs?: {                        // 电球护体（巨鳗王）：环绕电球封锁近身
+        cd: number;                 //   冷却(秒)
+        count: number;              //   电球数量
+        radius: number;             //   环绕半径(px)
+        orbitSpeed: number;         //   环绕角速度(弧度/秒)
+        duration: number;           //   持续时间(秒)
+        orbRadius: number;          //   电球半径(px)
+        damage: number;             //   触碰伤害
+    };
+    clones?: {                      // 幻影分身（安康鱼王）：幻影移动+散射，迷惑玩家
+        cd: number;                 //   冷却(秒)
+        count: number;              //   分身数量
+        duration: number;           //   分身持续(秒)
+        speed: number;              //   分身追玩家速度(px/s)
+        fireInterval: number;       //   分身开火间隔(秒)
+        fireCount: number;          //   每轮弹幕数（扇形）
+        fireSpread: number;         //   扇形张角(弧度)
+        fireDamageMult: number;     //   弹伤害 = BOSS 弹幕伤害 × 倍率
+        radius: number;             //   分身半径(px，视觉与碰撞不变只有视觉)
+    };
+    blackhole?: {                   // 引力黑洞（安康鱼王）：生成在玩家脚下吸附玩家，结束爆炸
+        cd: number;                 //   冷却(秒)
+        pullRadius: number;         //   引力场半径(px)
+        pullForce: number;          //   引力强度（最大拉速 px/s，随距离衰减）
+        coreDamage: number;         //   黑洞核心持续伤害(每秒，靠近被吞噬)
+        duration: number;           //   持续时间(秒)（结束时爆炸）
+        holeRadius: number;         //   黑洞视觉半径(px)
+        explodeCount: number;       //   爆炸弹幕数量
+        explodeSpeed: number;       //   爆炸弹速
+        explodeDamage: number;      //   爆炸单发伤害
+    };
+}
+
+/** 每个世界的 Boss 技能配置（下标 = MAPS 下标；无技能的 Boss 保持原有行为） */
+export const BOSS_SKILLS: BossSkillCfg[] = [
+    // —— 巨蟹王（珊瑚礁）：重装坦克，跳跃砸地压近战走位 ——
+    {
+        announce: '🦀 巨蟹王跃起砸地！注意落地冲击波！',
+        slam: {
+            cd: 8.5, windup: 0.55, airTime: 0.8,
+            waveCount: 20, waveSpeed: 260, range: 620, damage: 16,
+        },
+    },
+    // —— 巨鳗王（深海）：电球护体，封锁贴身输出 ——
+    {
+        announce: '⚡ 巨鳗王放出电球护体！看准间隙！',
+        orbs: {
+            cd: 10.0, count: 4, radius: 130, orbitSpeed: 1.5, duration: 6.5,
+            orbRadius: 14, damage: 15,
+        },
+    },
+    // —— 安康鱼王（海底火山）：幻影分身 + 引力黑洞，全场控制 ——
+    {
+        announce: '👁 安康鱼王施展幻术！分身与黑洞降临！',
+        clones: {
+            cd: 12.0, count: 2, duration: 5.5, speed: 70,
+            fireInterval: 1.5, fireCount: 3, fireSpread: 0.5, fireDamageMult: 0.5, radius: 38,
+        },
+        blackhole: {
+            cd: 11.0, pullRadius: 230, pullForce: 430, coreDamage: 15,
+            duration: 2.2, holeRadius: 46, explodeCount: 16, explodeSpeed: 240,
+            explodeDamage: 18,
+        },
+    },
+];
 
 // ===== 精灵素材映射（assets/resources/sprites/*.png，无扩展名） =====
 export const SPRITES = {

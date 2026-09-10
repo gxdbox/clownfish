@@ -527,6 +527,10 @@ export class GameManager extends Component {
     onBossKilled(boss: BossAI): void {
         this.audioManager?.explosion();
         this.cameraFollow?.addShake(14);
+        // 提前缓存 Boss 位置：Boss 的 _kill() 已 destroy 节点，
+        // 抽奖回调（2-3秒后）再读 boss.node.position 会 null 崩溃 + 传送门不生成
+        const bossX = boss.node?.position.x ?? 0;
+        const bossY = boss.node?.position.y ?? 0;
         // 隐藏Boss击杀 → 稀有奖励 + 关房间（不走地图Boss流程）
         if (boss.hidden || this._hiddenBoss === boss) {
             this.spawnManager?.onBossKilled(boss); // 掉落
@@ -541,10 +545,10 @@ export class GameManager extends Component {
                 this._victory();
             });
         } else {
-            // 打开胜利战利品抽奖 → 抽完开传送门
+            // 打开胜利战利品抽奖 → 抽完用缓存的位置开传送门
             this._openBossReward(() => {
                 this.notify(`💠 ${map.bossName} 被击败！传送门已开启，游进去进入下一世界`);
-                this.spawnManager?.spawnPortal(boss.node.position.x, boss.node.position.y);
+                this.spawnManager?.spawnPortal(bossX, bossY);
             });
         }
     }

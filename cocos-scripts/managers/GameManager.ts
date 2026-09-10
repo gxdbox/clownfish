@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -63,6 +63,7 @@ export class GameManager extends Component {
     private _levelUpChoices: UpgradeChoice[] = [];
     private _heartbeatAcc = 0;       // PLAYING 心跳日志计时（每秒输出实体数量）
     private _roomState: { kind: 'dialogue' | 'shop' | 'boss'; index: number; collected: boolean } | null = null;
+    private _hiddenBoss: BossAI | null = null;   // 当前隐藏Boss（熔岩裂隙）
 
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
@@ -521,6 +522,12 @@ export class GameManager extends Component {
     onBossKilled(boss: BossAI): void {
         this.audioManager?.explosion();
         this.cameraFollow?.addShake(14);
+        // 隐藏Boss击杀 → 稀有奖励 + 关房间（不走地图Boss流程）
+        if (boss.hidden || this._hiddenBoss === boss) {
+            this.spawnManager?.onBossKilled(boss); // 掉落
+            this._onHiddenBossKilled();
+            return;
+        }
         this.spawnManager?.onBossKilled(boss); // 掉落
         const map = MAPS[this.mapIndex % MAPS.length];
         if (this.mapIndex >= MAPS.length - 1) {
@@ -668,16 +675,50 @@ export class GameManager extends Component {
         }
     }
 
-    // ===== 阶段4：隐藏Boss房（火山·熔岩裂隙） =====
+    // ===== 阶段4：隐藏Boss房（火山·熔岩裂隙·深渊熔岩怪） =====
     private _showHiddenBossRoom(): void {
         this.notify('💀 你踏进熔岩裂隙，深渊里的怪物苏醒了……');
         if (this.spawnManager) this.spawnManager.bossActive = true;
-        // 生成隐藏 Boss（阶段4实现，先占位）
         this._roomState = { kind: 'boss', index: 0, collected: false };
-        this.scheduleOnce(() => {
-            this.notify('💀 隐藏Boss还没登场（阶段4）');
+        if (!this.entityManager || !this.playerController || !this.worldManager) {
             this._closeRoom();
-        }, 3.0);
+            return;
+        }
+        // 生成隐藏Boss（复用 BossAI，setHidden 强化）
+        const ppos = this.playerController.node.position;
+        const node = new Node('HiddenBoss');
+        this.entityManager.addChild(node);
+        node.setPosition(ppos.x + 260, ppos.y + 60, 0); // 玩家附近偏右
+        const ai = node.getComponent(BossAI) ?? node.addComponent(BossAI);
+        if (ai) {
+            ai.worldManager = this.worldManager;
+            ai.audioManager = this.audioManager;
+            ai.gameManager = this;
+            ai.player = this.playerController;
+            ai.entityManager = this.entityManager;
+            // 用第三张图（火山）的技能组初始化，再套隐藏Boss强化
+            ai.init(node.position.x, node.position.y, 2);
+            ai.setHidden();
+            this._hiddenBoss = ai;
+        }
+        // 紧凑围栏（半边长 500，压迫感更强）
+        this.worldManager.spawnArena(ppos.x, ppos.y, ppos.x, ppos.y);
+    }
+
+    /** 隐藏Boss击杀（由 onBossKilled 分流）：发稀有奖励 + 关房间 */
+    private _onHiddenBossKilled(): void {
+        const p = this.playerController;
+        if (p && this._roomState?.kind === 'boss' && !this._roomState.collected) {
+            this._roomState.collected = true;
+            p.addExp(HIDDEN_BOSS.REWARD_EXP);
+            p.coins += HIDDEN_BOSS.REWARD_COINS;
+            if (HIDDEN_BOSS.REWARD_BOMB && this.spawnManager) {
+                this.spawnManager.spawnBonusGems(p.node.position.x, p.node.position.y, 40);
+            }
+            this.notify(`🏆 击败 ${HIDDEN_BOSS.NAME}！经验 +${HIDDEN_BOSS.REWARD_EXP}，金币 +${HIDDEN_BOSS.REWARD_COINS}！`);
+        }
+        this._hiddenBoss = null;
+        this.scheduleOnce(() => this._closeRoom(), 2.5);
     }
 
     /** 关闭房间：恢复正常游戏 */

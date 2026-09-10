@@ -233,6 +233,19 @@ export const SHOP_ITEMS: { id: string; name: string; icon: string; desc: string;
     { id: 'bomb', name: '炸弹', icon: '💣', desc: '全屏清场（绝境救赎）', cost: 40, effect: 'bomb1' },
 ];
 
+// ===== 隐藏Boss（火山·熔岩裂隙：深渊熔岩怪，更强变体） =====
+export const HIDDEN_BOSS = {
+    NAME: '深渊熔岩怪',
+    HP_MULT: 1.8,             // 血量 ×1.8（比地图 Boss 更肉）
+    SPEED_MULT: 1.25,         // 移速 ×1.25
+    DMG_MULT: 1.2,            // 伤害 ×1.2
+    SKILL_SPEED_MULT: 1.15,   // 技能触发更频繁
+    REWARD_EXP: 300,          // 击杀奖励经验
+    REWARD_COINS: 30,         // 击杀奖励金币
+    REWARD_BOMB: true,        // 额外奖励炸弹
+    ARENA_HALF: 500,          // 隐藏Boss战斗围栏半边长（更紧凑，压迫感更强）
+};
+
 // ===== 状态机 =====
 export enum GameState {
     BOOT = 'BOOT',

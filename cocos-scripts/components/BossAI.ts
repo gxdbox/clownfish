@@ -22,7 +22,7 @@
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Node, Graphics, Color, Sprite, UITransform, Vec3, tween } from 'cc';
-import { BOSS, WORLD, GameState, SPRITES, MAPS, PLAYER, BOSS_SKILLS, BossSkillCfg } from '../config';
+import { BOSS, WORLD, GameState, SPRITES, MAPS, PLAYER, BOSS_SKILLS, BossSkillCfg, HIDDEN_BOSS } from '../config';
 import { ensureRenderTransform, loadSpriteOnto, clamp } from '../util';
 import { SwimAnim, SWIM, BOSS_SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
@@ -57,6 +57,7 @@ export class BossAI extends Component {
     knockY = 0;
     faceAngle = 0;
     isBoss = true;
+    hidden = false;            // 隐藏Boss（火山·熔岩裂隙）：更强变体
     private _active = true;
     private _swim = new SwimAnim();
     private _swimType = 'boss';
@@ -148,6 +149,7 @@ export class BossAI extends Component {
         this._slamState = 'idle';
         this._slamTimer = 0;
         this._cleanupSkills();
+        // 隐藏Boss专属强化（setHidden 在 init 后调用，这里保持默认值即可）
 
         this.node.setPosition(x, y, 0);
         this.node.active = true;
@@ -158,6 +160,48 @@ export class BossAI extends Component {
         // 防止玩家甩开 Boss（地图 4000×4000 太大，不围栏可以跑图拖死 Boss 战）。
         const ppos = this.player ? this.player.node.position : null;
         this.worldManager?.spawnArena(x, y, ppos ? ppos.x : x, ppos ? ppos.y : y);
+    }
+
+    /** 设为隐藏Boss（火山·熔岩裂隙：深渊熔岩怪）：
+     *  血量/移速/伤害更高，技能触发更频繁，视觉红黑熔岩调 */
+    setHidden(): void {
+        this.hidden = true;
+        this.hp = this.maxHp = Math.round(this.maxHp * HIDDEN_BOSS.HP_MULT);
+        this.speed = Math.round(this.speed * HIDDEN_BOSS.SPEED_MULT);
+        this._baseSpeed = this.speed;
+        this.damage = Math.round(this.damage * HIDDEN_BOSS.DMG_MULT);
+        this.xp = Math.round(HIDDEN_BOSS.REWARD_EXP);
+        // 技能 CD 更短（触发更频繁）
+        this._skillCd = {
+            slam: 3.5 / HIDDEN_BOSS.SKILL_SPEED_MULT,
+            orbs: 3.5 / HIDDEN_BOSS.SKILL_SPEED_MULT,
+            clones: 6.0 / HIDDEN_BOSS.SKILL_SPEED_MULT,
+            blackhole: 6.0 / HIDDEN_BOSS.SKILL_SPEED_MULT,
+        };
+        this._applyHiddenVisual();
+    }
+
+    /** 隐藏Boss视觉：红色熔岩调（Graphics 兜底改色 + 顶部横幅） */
+    private _applyHiddenVisual(): void {
+        const body = this.node.getChildByName('Body');
+        const g = body ? (body.getComponent(Graphics) ?? null) : null;
+        if (g) {
+            g.clear();
+            g.fillColor = new Color(200, 40, 30, 255);
+            g.circle(0, 0, BOSS.RADIUS + 6);
+            g.fill();
+            g.fillColor = new Color(255, 90, 50, 255);
+            g.circle(0, 0, BOSS.RADIUS);
+            g.fill();
+            g.fillColor = new Color(255, 220, 120, 255);
+            g.circle(-10, 8, BOSS.RADIUS * 0.3);
+            g.fill();
+            g.fillColor = new Color(80, 20, 10, 255);
+            g.circle(10, -6, BOSS.RADIUS * 0.18);
+            g.fill();
+        }
+        const gm = this.gameManager;
+        if (gm) gm.notify(`🔥 隐藏Boss：${HIDDEN_BOSS.NAME} 出现了！`);
     }
 
     /** Boss 视觉：优先 AI 精灵素材，失败回退 Graphics 大圆 */

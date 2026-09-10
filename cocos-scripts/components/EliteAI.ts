@@ -284,14 +284,17 @@ export class EliteAI extends Component {
             const bn = new Node('EliteBullet');
             this.entityManager.addChild(bn);
             bn.setPosition(pos.x, pos.y, 0);
-            // 兜底视觉：红色圆弹丸（无 Bullet 预制体/素材时保证可见）
-            ensureRenderTransform(bn, 20, 20);
+            // 兜底视觉：红色圆弹丸（无 Bullet 预制体/素材时保证可见；放大+白描边提高辨识度）
+            ensureRenderTransform(bn, 30, 30);
             const g = bn.addComponent(Graphics);
+            g.fillColor = new Color(255, 255, 255, 220);
+            g.circle(0, 0, 13);
+            g.fill();
             g.fillColor = new Color(255, 80, 80, 255);
-            g.circle(0, 0, 9);
+            g.circle(0, 0, 10);
             g.fill();
             g.fillColor = new Color(255, 210, 210, 255);
-            g.circle(0, 0, 4);
+            g.circle(0, 0, 5);
             g.fill();
             const bullet = bn.addComponent(Bullet);
             bullet.gameManager = this.gameManager;

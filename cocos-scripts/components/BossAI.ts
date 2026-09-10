@@ -425,13 +425,20 @@ export class BossAI extends Component {
         const bn = new Node('BossBullet');
         this.entityManager.addChild(bn);
         bn.setPosition(x, y, 0);
-        ensureRenderTransform(bn, 22, 22);
+        // 弹幕视觉强化：更大 + 高对比 + 白色描边（原 10px 小红圆在珊瑚背景里几乎不可见，
+        // 玩家看不到 Boss 技能 → "只看到大靶子笨笨的"）
+        ensureRenderTransform(bn, 36, 36);
         const g = bn.addComponent(Graphics);
-        g.fillColor = new Color(255, 120, 90, 255);
-        g.circle(0, 0, 10);
+        // 外圈白色描边（高对比，任何背景都醒目）
+        g.fillColor = new Color(255, 255, 255, 220);
+        g.circle(0, 0, 16);
         g.fill();
-        g.fillColor = new Color(255, 230, 200, 255);
-        g.circle(0, 0, 5);
+        // 主球体（红橙渐变感：外深内亮）
+        g.fillColor = new Color(255, 80, 50, 255);
+        g.circle(0, 0, 13);
+        g.fill();
+        g.fillColor = new Color(255, 230, 150, 255);
+        g.circle(0, 0, 7);
         g.fill();
         const bullet = bn.addComponent(Bullet);
         bullet.gameManager = this.gameManager;

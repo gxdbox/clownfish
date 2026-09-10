@@ -59,7 +59,7 @@ export const ENEMY = {
 
 // ===== 精英敌人 =====
 export const ELITE = {
-    RADIUS: 22,
+    RADIUS: 44,               // 精英半径（22→44 放大 2 倍，与普通怪辨识度拉开）
     HP: 400,
     HP_GROWTH: 0.30,          // 每只精英生命成长 +30%
     SPEED: 52,

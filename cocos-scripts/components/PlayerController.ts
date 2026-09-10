@@ -65,6 +65,7 @@ export class PlayerController extends Component {
     boostMult = 1;
     faceAngle = 0;
     dead = false;
+    coins = 0;                // 金币（商人房货币：击杀掉落拾取，商店消耗）
 
     // ===== 外部速度（Boss 技能等外力，如引力黑洞拉扯；每帧按 _externalDamp 衰减，
     // 施力方需每帧重设才能持续，冲刺期间不生效以保留冲刺无敌穿越的爽感） =====

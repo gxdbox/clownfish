@@ -98,8 +98,10 @@ export const PICKUP = {
     HP_BIG_RADIUS: 13,
     SHIELD_RADIUS: 12,
     BOMB_RADIUS: 14,          // 炸弹拾取物半径
+    COIN_RADIUS: 9,           // 金币拾取物半径
     GEM_VALUE: 1,
     BIG_GEM_VALUE: 20,
+    COIN_VALUE: 1,            // 金币价值
     RANGE_BONUS: 0.25,        // 范围+25%(永久)
     BOOST_SPEED_BONUS: 0.20,  // 速度+20%
     BOOST_DURATION: 15,       // 持续15秒
@@ -137,6 +139,7 @@ export const DROP = {
     RANGE_CHANCE: 0.012,      // 掉磁铁（范围+25%）概率
     BOOST_CHANCE: 0.016,      // 掉加速概率
     SHIELD_CHANCE: 0.012,     // 掉护盾概率
+    COIN_CHANCE: 0.06,        // 掉金币概率（商人房货币）
     ELITE_HP_BIG: true,       // 精英必掉大血球
     ELITE_BONUS_CHANCE: 0.8   // 精英额外掉一个加成拾取物概率
 };
@@ -189,6 +192,46 @@ export const ARENA = {
     // 围栏墙离 Boss 出生点的偏移（4 面：上/下/左/右，墙中心坐标 = Boss 中心 + 偏移 ± HALF）
     OFFSET: 620,
 };
+
+// ===== 地图入口（每张图一个主题入口：珊瑚礁=剧情房 / 深海=商人房 / 火山=隐藏Boss房） =====
+export const ENTRANCE = {
+    RADIUS: 38,               // 触发半径（玩家进入即触发）
+    SIZE: 96,                 // 视觉尺寸
+    // 每张地图入口的位置（相对世界坐标）
+    POS: [
+        { x: 3200, y: 3200 }, // 珊瑚礁：海葵洞（剧情房）
+        { x: 700, y: 3300 },  // 深海：沉船残骸（商人房）
+        { x: 3300, y: 600 },  // 火山：熔岩裂隙（隐藏Boss房）
+    ],
+    // 每张地图入口的主题配置（视觉色 + 名字 + 类型）
+    THEME: [
+        { name: '海葵洞', type: 'dialogue', color: [255, 140, 90], icon: '🐢' },    // 老海龟剧情
+        { name: '沉船残骸', type: 'shop', color: [255, 210, 80], icon: '🏪' },      // 灯笼鱼商人
+        { name: '熔岩裂隙', type: 'boss', color: [255, 90, 50], icon: '💀' },       // 隐藏Boss
+    ],
+};
+
+// ===== 轻剧情对话（珊瑚礁·海葵洞：老海龟 3-5 句，可跳过） =====
+export const NPC_SCRIPT: { npc: string; lines: string[]; reward: { exp: number; coins: number } } = {
+    npc: '老海龟',
+    lines: [
+        '小家伙，你能游到这里，说明你有点本事。',
+        '我是老海龟，守护这片珊瑚礁百年了。',
+        '传说深海尽头藏着"珊瑚之心"，那是我们海族的力量之源。',
+        '但通往那里的路上，有巨大的怪物挡着……',
+        '先去打败每片海域的霸主，才能找到它。游吧，小勇士！',
+    ],
+    reward: { exp: 50, coins: 5 },
+};
+
+// ===== 商人房商品（深海·沉船残骸：灯笼鱼商人） =====
+export const SHOP_ITEMS: { id: string; name: string; icon: string; desc: string; cost: number; effect: string }[] = [
+    { id: 'hp', name: '海藻疗愈', icon: '❤', desc: '立即回复 25 点生命', cost: 10, effect: 'hp25' },
+    { id: 'boost', name: '珊瑚加速', icon: '⚡', desc: '移动速度 +20%（15秒）', cost: 15, effect: 'boost15' },
+    { id: 'shield', name: '贝壳护盾', icon: '🛡', desc: '获得 1 层护盾（抵挡一次伤害）', cost: 20, effect: 'shield1' },
+    { id: 'damage', name: '尖牙强化', icon: '🗡', desc: '子弹伤害 +15%（永久）', cost: 30, effect: 'damage15' },
+    { id: 'bomb', name: '炸弹', icon: '💣', desc: '全屏清场（绝境救赎）', cost: 40, effect: 'bomb1' },
+];
 
 // ===== 状态机 =====
 export enum GameState {

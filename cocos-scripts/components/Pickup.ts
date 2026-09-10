@@ -49,6 +49,7 @@ export class Pickup extends Component {
             range: 'sprites/rangePickup',
             boost: 'sprites/boostPickup',
             bomb: 'sprites/bombPickup',   // 炸弹（无素材时走 Graphics 兜底）
+            coin: 'sprites/coinPickup',   // 金币
         };
         if (sprite) {
             const path = frameMap[this.type];
@@ -82,6 +83,7 @@ export class Pickup extends Component {
             range: PICKUP.RANGE_RADIUS,
             boost: PICKUP.BOOST_RADIUS,
             bomb: PICKUP.BOMB_RADIUS,
+            coin: PICKUP.COIN_RADIUS,
         };
         const colorMap: Record<string, Color> = {
             gem: new Color(80, 225, 255, 255),
@@ -92,6 +94,7 @@ export class Pickup extends Component {
             range: new Color(200, 120, 255, 255),
             boost: new Color(110, 255, 150, 255),
             bomb: new Color(255, 140, 30, 255),  // 炸弹：橙红，醒目
+            coin: new Color(255, 210, 60, 255),  // 金币：金黄
         };
         const r = radiusMap[this.type] ?? PICKUP.GEM_RADIUS;
         const c = colorMap[this.type] ?? new Color(255, 255, 255, 255);
@@ -101,7 +104,18 @@ export class Pickup extends Component {
         g.fillColor = c;
         g.circle(0, 0, r);
         g.fill();
-        if (this.type === 'bomb') {
+        if (this.type === 'coin') {
+            // 金币视觉：金黄圆 + 内圈纹路 + 高光（一眼可辨）
+            g.fillColor = new Color(255, 240, 150, 255);
+            g.circle(0, 0, r * 0.7);
+            g.fill();
+            g.fillColor = new Color(200, 150, 30, 255);
+            g.circle(0, 0, r * 0.4);
+            g.fill();
+            g.fillColor = new Color(255, 255, 255, 220);
+            g.circle(-r * 0.3, r * 0.3, r * 0.2);
+            g.fill();
+        } else if (this.type === 'bomb') {
             // 炸弹视觉：黑球 + 引信 + 火星（简单可辨）
             g.fillColor = new Color(30, 30, 30, 255);
             g.circle(0, 0, r * 0.85);
@@ -176,6 +190,9 @@ export class Pickup extends Component {
 
         if (this.type === 'gem' || this.type === 'bigGem') {
             player.addExp(this.value);
+        } else if (this.type === 'coin') {
+            player.coins += PICKUP.COIN_VALUE;
+            if (player.gameManager) player.gameManager.notify('🪙 +1 金币');
         } else if (this.type === 'bomb') {
             // 炸弹：交给 GameManager 触发全屏清场（视觉/音效/伤害/经验雨集中管理）
             if (player.gameManager) {

@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP } from '../config';
 import { formatTime, createLabel } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -20,6 +20,7 @@ import { PlayerController, UpgradeChoice } from '../components/PlayerController'
 import { EnemyAI } from '../components/EnemyAI';
 import { EliteAI } from '../components/EliteAI';
 import { BossAI } from '../components/BossAI';
+import { MapEntrance } from '../components/MapEntrance';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
 import { LevelUpUI } from '../ui/LevelUpUI';
@@ -61,6 +62,7 @@ export class GameManager extends Component {
     mapIndex = 0;                    // 当前世界（0 珊瑚礁 / 1 深海 / 2 海底火山）
     private _levelUpChoices: UpgradeChoice[] = [];
     private _heartbeatAcc = 0;       // PLAYING 心跳日志计时（每秒输出实体数量）
+    private _roomState: { kind: 'dialogue' | 'shop' | 'boss'; index: number; collected: boolean } | null = null;
 
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
@@ -388,6 +390,9 @@ export class GameManager extends Component {
             this.worldManager?.setMap(0);
             this.worldManager?.generateTerrain();
 
+            // 生成主题入口（珊瑚礁·海葵洞剧情房）
+            this._spawnEntrance();
+
             // 放置玩家
             step = 'player';
             console.log('[Clownfish] startGame @player');
@@ -544,6 +549,142 @@ export class GameManager extends Component {
         this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
         this.audioManager?.playBgm(this._mapBgm());
         this.notify(`🌊 进入 ${map.name}（${map.subtitle}）`);
+        // 生成新地图的主题入口
+        this._spawnEntrance();
+    }
+
+    // ===== 地图入口（每图一个主题入口：剧情房/商店/隐藏Boss） =====
+
+    /** 生成当前地图的主题入口（startGame 和 advanceMap 后调用） */
+    private _spawnEntrance(): void {
+        if (!this.entityManager || !this.playerController) return;
+        const pos = ENTRANCE.POS[this.mapIndex % ENTRANCE.POS.length];
+        if (!pos) return;
+        const node = new Node('MapEntrance');
+        this.entityManager.addChild(node);
+        const ent = node.getComponent(MapEntrance) ?? node.addComponent(MapEntrance);
+        ent.gameManager = this;
+        ent.player = this.playerController;
+        ent.init(pos.x, pos.y, this.mapIndex);
+        console.log(`[Clownfish] 地图入口生成: ${ENTRANCE.THEME[this.mapIndex % ENTRANCE.THEME.length].name}`);
+    }
+
+    /** 玩家进入入口 → 按类型打开房间（dialogue/shop/boss） */
+    openEntrance(type: string): void {
+        if (this.state !== GameState.PLAYING) return;
+        const theme = ENTRANCE.THEME[this.mapIndex % ENTRANCE.THEME.length];
+        console.log(`[Clownfish] 打开入口: ${theme.name} (${type})`);
+        if (type === 'dialogue') {
+            this._showDialogueRoom();
+        } else if (type === 'shop') {
+            this._showShopRoom();
+        } else if (type === 'boss') {
+            this._showHiddenBossRoom();
+        }
+    }
+
+    // ===== 阶段2：剧情房（珊瑚礁·海葵洞·老海龟，轻剧情） =====
+    private _showDialogueRoom(): void {
+        const script = NPC_SCRIPT;
+        this._roomState = { kind: 'dialogue', index: 0, collected: false };
+        this.notify('🐢 你游进了海葵洞，看见一只老海龟……');
+        // 进入房间模式：暂停普通生成（复用 spawnManager 的 bossActive 暂停）
+        if (this.spawnManager) this.spawnManager.bossActive = true;
+        this._renderDialogue();
+    }
+
+    private _renderDialogue(): void {
+        const st = this._roomState;
+        if (!st || st.kind !== 'dialogue') return;
+        const script = NPC_SCRIPT;
+        const line = script.lines[st.index];
+        this.notify(`🐢 ${script.npc}：${line}`);
+        // 下一句 / 完成
+        if (st.index < script.lines.length - 1) {
+            st.index++;
+            // 延时继续下一句
+            this.scheduleOnce(() => {
+                if (this._roomState?.kind === 'dialogue') this._renderDialogue();
+            }, 2.2);
+        } else {
+            // 对话完成：发奖励 + 关房间
+            const p = this.playerController;
+            if (p && !st.collected) {
+                st.collected = true;
+                p.addExp(script.reward.exp);
+                p.coins += script.reward.coins;
+                this.notify(`🎁 老海龟赠礼：经验 +${script.reward.exp}，金币 +${script.reward.coins}！`);
+            }
+            this.scheduleOnce(() => this._closeRoom(), 2.0);
+        }
+    }
+
+    // ===== 阶段3：商店房（深海·沉船残骸·灯笼鱼商人） =====
+    private _showShopRoom(): void {
+        const p = this.playerController;
+        if (!p) return;
+        this._roomState = { kind: 'shop', index: 0, collected: false };
+        if (this.spawnManager) this.spawnManager.bossActive = true;
+        this.notify('🏪 你游进沉船残骸，灯笼鱼商人的灯笼亮了起来……');
+        this.scheduleOnce(() => this._renderShop(), 1.2);
+    }
+
+    private _renderShop(): void {
+        const p = this.playerController;
+        if (!p || this._roomState?.kind !== 'shop') return;
+        const avail = SHOP_ITEMS.filter(item => p.coins >= item.cost);
+        if (avail.length === 0) {
+            this.notify(`🏪 灯笼鱼商人：金币不够……（你有 ${p.coins} 金币）`);
+            this.scheduleOnce(() => this._closeRoom(), 2.2);
+            return;
+        }
+        // 显示商品列表（用 toast 依次展示，最后一个触发购买）
+        const lines = avail.map((it, i) => `${it.icon} ${it.name}(${it.cost}金): ${it.desc}`);
+        lines.push('点击屏幕任意处购买第一个商品');
+        this.notify(`🏪 灯笼鱼商人：\n${lines.join('\n')}`);
+        // 简易交互：当前只展示，购买逻辑由 HUD 按钮或触摸处理（阶段3扩展）
+        // 这里先做展示 + 自动卖第一个买得起的
+        const target = avail[0];
+        if (target) {
+            p.coins -= target.cost;
+            this._applyShopEffect(target.effect);
+            this.notify(`✅ 购买成功：${target.icon} ${target.name}（剩 ${p.coins} 金币）`);
+        }
+        this.scheduleOnce(() => this._closeRoom(), 2.5);
+    }
+
+    private _applyShopEffect(effect: string): void {
+        const p = this.playerController;
+        if (!p) return;
+        switch (effect) {
+            case 'hp25': p.hp = Math.min(p.maxHp, p.hp + 25); break;
+            case 'boost15':
+                p.boostMult = 1 + PICKUP.BOOST_SPEED_BONUS;
+                p.boostTimer = PICKUP.BOOST_DURATION;
+                break;
+            case 'shield1': p.shield = Math.min(PICKUP.SHIELD_MAX, p.shield + 1); break;
+            case 'damage15': p.bulletDamage = Math.round(p.bulletDamage * 1.15); break;
+            case 'bomb1': this.detonateBomb(); break;
+        }
+    }
+
+    // ===== 阶段4：隐藏Boss房（火山·熔岩裂隙） =====
+    private _showHiddenBossRoom(): void {
+        this.notify('💀 你踏进熔岩裂隙，深渊里的怪物苏醒了……');
+        if (this.spawnManager) this.spawnManager.bossActive = true;
+        // 生成隐藏 Boss（阶段4实现，先占位）
+        this._roomState = { kind: 'boss', index: 0, collected: false };
+        this.scheduleOnce(() => {
+            this.notify('💀 隐藏Boss还没登场（阶段4）');
+            this._closeRoom();
+        }, 3.0);
+    }
+
+    /** 关闭房间：恢复正常游戏 */
+    private _closeRoom(): void {
+        this._roomState = null;
+        if (this.spawnManager) this.spawnManager.bossActive = false;
+        this.notify('🌀 你游出入口，回到了海里的世界');
     }
 
     /** 当前地图对应的 BGM key（0珊瑚礁/1深海/2海底火山） */

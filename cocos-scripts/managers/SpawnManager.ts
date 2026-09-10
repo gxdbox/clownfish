@@ -401,6 +401,8 @@ export class SpawnManager extends Component {
             this._spawnPickupAt(x, y, 'boost', 0);
         } else if (r < D.HP_CHANCE + D.SHIELD_CHANCE + D.BOOST_CHANCE + D.RANGE_CHANCE) {
             this._spawnPickupAt(x, y, 'range', 0);
+        } else if (r < D.HP_CHANCE + D.SHIELD_CHANCE + D.BOOST_CHANCE + D.RANGE_CHANCE + D.COIN_CHANCE) {
+            this._spawnPickupAt(x, y, 'coin', PICKUP.COIN_VALUE);
         }
     }
 

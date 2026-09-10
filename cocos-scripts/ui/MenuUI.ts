@@ -5,7 +5,7 @@
  * Cocos Creator 3.8.8 迁移版
  */
 import { _decorator, Component, Color, Label, Node } from 'cc';
-import { createLabel, createPanel, createButton } from '../util';
+import { createLabel, createPanel, createButton, createBar } from '../util';
 import type { GameManager } from '../managers/GameManager';
 import type { AudioManager } from '../managers/AudioManager';
 const { ccclass } = _decorator;
@@ -43,9 +43,55 @@ export class MenuUI extends Component {
         this.muteButton = mute.node;
         this.muteLabel = mute.label;
 
-        createLabel(this.node, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -176, 18, new Color(140, 170, 190, 255));
+        // ===== 音量调节（BGM / SFX 独立，−/+ 按钮 + 进度条；触屏友好） =====
+        this._buildVolumeUI();
+
+        createLabel(this.node, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -232, 18, new Color(140, 170, 190, 255));
 
         this._updateMuteLabel();
+    }
+
+    // ===== 音量调节 UI =====
+    private _bgmBar: { set: (p: number) => void } | null = null;
+    private _sfxBar: { set: (p: number) => void } | null = null;
+
+    private _buildVolumeUI(): void {
+        // BGM 行：标题 + 进度条 + − / +
+        createLabel(this.node, '🎵 音乐', -230, -158, 20, new Color(200, 220, 240, 255));
+        this._bgmBar = createBar(this.node, -60, -158, 160, 18, new Color(110, 210, 255, 255));
+        createButton(this.node, '−', -185, -158, () => {
+            this.audioManager?.click();
+            this.audioManager?.setBgmVolume((this.audioManager?.bgmVolume ?? 1) - 0.1);
+            this._refreshBars();
+        }, 56, 40);
+        createButton(this.node, '+', 75, -158, () => {
+            this.audioManager?.click();
+            this.audioManager?.setBgmVolume((this.audioManager?.bgmVolume ?? 1) + 0.1);
+            this._refreshBars();
+        }, 56, 40);
+
+        // SFX 行
+        createLabel(this.node, '🎯 音效', -230, -206, 20, new Color(200, 220, 240, 255));
+        this._sfxBar = createBar(this.node, -60, -206, 160, 18, new Color(255, 180, 90, 255));
+        createButton(this.node, '−', -185, -206, () => {
+            this.audioManager?.click();
+            this.audioManager?.setSfxVolume((this.audioManager?.sfxVolume ?? 1) - 0.1);
+            this._refreshBars();
+        }, 56, 40);
+        createButton(this.node, '+', 75, -206, () => {
+            this.audioManager?.click();
+            this.audioManager?.setSfxVolume((this.audioManager?.sfxVolume ?? 1) + 0.1);
+            this._refreshBars();
+        }, 56, 40);
+
+        this._refreshBars();
+    }
+
+    private _refreshBars(): void {
+        const am = this.audioManager;
+        if (!am) return;
+        this._bgmBar?.set(am.bgmVolume);
+        this._sfxBar?.set(am.sfxVolume);
     }
 
     /** 设置引用（由 GameManager 调用） */

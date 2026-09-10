@@ -92,6 +92,27 @@ export class AudioManager extends Component {
     private _hardMute = false;       // audioMute=1 查询参数硬静音（A/B 验证音频是否崩溃诱因）
     private _lastPlay: Record<string, number> = {};  // 音效节流时间戳（防连击爆音）
 
+    // ===== 音量分层（用户体验优先：BGM 是底、音效是反馈，音效不能压过 BGM） =====
+    // 三层设计：
+    //   BGM   0.55 — 氛围基底，明显可闻
+    //   低频  0.35 — 爆炸/升级等"重要时刻"反馈，有存在感但不炸耳
+    //   高频  0.18 — 射击/命中等每 0.3s 一次的连续音，必须轻柔防刺耳（高频本就尖锐）
+    private readonly BGM_AUDIO_VOLUME = 0.55; // AI 素材 BGM（AudioSource）音量（原 0.5，略提升让氛围更足）
+    private readonly SFX_VOLUME = 0.35;       // 低频音效（one-shot：爆炸/升级/激光/点击）
+    private readonly SFX_HIGH_VOLUME = 0.18;  // 高频音效（persist：射击/命中/击杀/拾取/冲刺）
+
+    // ===== 玩家自定义音量（0-1，独立 BGM/SFX 滑条；localStorage 持久化） =====
+    private _bgmVol = 1.0;    // BGM 音量倍率（玩家可调）
+    private _sfxVol = 1.0;    // SFX 音量倍率（玩家可调）
+    private static readonly VOL_KEY = 'clownfish_volume'; // localStorage 存储 key
+
+    /** 当前 BGM 实际音量 = 基础分层 × 玩家倍率 */
+    private get _curBgmVol(): number { return this.BGM_AUDIO_VOLUME * this._bgmVol; }
+    /** 当前低频音效实际音量 */
+    private get _curSfxVol(): number { return this.SFX_VOLUME * this._sfxVol; }
+    /** 当前高频音效实际音量 */
+    private get _curSfxHighVol(): number { return this.SFX_HIGH_VOLUME * this._sfxVol; }
+
     // ===== 高频音效持久源池（微信端每次 playOneShot = 新建一个 innerAudioContext，
     // 玩家 0.3s 自动射击 + 命中/击杀音效 → 每分钟数百次 create/destroy context，
     // 是"玩几分钟后 webview 被静默杀掉"的头号嫌疑。持久源 = clip 只加载一次，之后
@@ -121,6 +142,9 @@ export class AudioManager extends Component {
     get oneShotTotal(): number { return this._oneShotTotal; }
 
     onLoad(): void {
+        // 读取玩家自定义音量（localStorage，微信端兼容 sys.localStorage）
+        this._loadVolume();
+
         // audioMute=1 硬静音开关（A/B 验证音频是否崩溃诱因：`...?audioMute=1` 启动）
         try {
             const getParam = (sys as any).getParameterByName;
@@ -375,7 +399,7 @@ export class AudioManager extends Component {
             console.log(`[Clownfish] BGM play: ${clip.name || clip.uuid}`);
             src.play();
             tween(src)
-                .to(0.6, { volume: this._muted ? 0 : 0.5 }, { easing: 'quadOut' })
+                .to(0.6, { volume: this._muted ? 0 : this._curBgmVol }, { easing: 'quadOut' })
                 .start();
         } catch (e) {
             // 微信 dev 工具/真机 AudioSource 播放异常不应拖垮整局（静音继续）
@@ -434,13 +458,59 @@ export class AudioManager extends Component {
     toggleMute(): boolean {
         this._muted = !this._muted;
         if (this._bgmSource) {
-            this._bgmSource.volume = this._muted ? 0 : 0.5;
+            this._bgmSource.volume = this._muted ? 0 : this._curBgmVol;
         }
         if (this._bgmGain && this._bgmCtx) {
             this._bgmGain.gain.setTargetAtTime(this._muted ? 0 : this.BGM_VOLUME, this._bgmCtx.currentTime, 0.3);
         }
         return this._muted;
     }
+
+    // ===== 玩家自定义音量（BGM / SFX 独立滑条，localStorage 持久化） =====
+
+    /** 读取玩家音量设置（默认 1.0 = 满音量倍率；解析失败回退默认） */
+    private _loadVolume(): void {
+        try {
+            const raw = (sys as any).localStorage?.getItem(AudioManager.VOL_KEY);
+            if (raw) {
+                const v = JSON.parse(raw);
+                if (typeof v.bgm === 'number' && v.bgm >= 0 && v.bgm <= 1) this._bgmVol = v.bgm;
+                if (typeof v.sfx === 'number' && v.sfx >= 0 && v.sfx <= 1) this._sfxVol = v.sfx;
+            }
+        } catch { /* 解析失败用默认值 */ }
+        console.log(`[Clownfish] 音量设置: BGM×${this._bgmVol.toFixed(2)} SFX×${this._sfxVol.toFixed(2)}`);
+    }
+
+    /** 保存音量设置到 localStorage */
+    private _saveVolume(): void {
+        try {
+            (sys as any).localStorage?.setItem(AudioManager.VOL_KEY, JSON.stringify({ bgm: this._bgmVol, sfx: this._sfxVol }));
+        } catch { /* 存储失败忽略 */ }
+    }
+
+    /** 设置 BGM 音量倍率（0-1），立即应用到当前 BGM 并保存 */
+    setBgmVolume(v: number): void {
+        this._bgmVol = Math.max(0, Math.min(1, v));
+        if (this._bgmSource) {
+            this._bgmSource.volume = this._muted ? 0 : this._curBgmVol;
+        }
+        this._saveVolume();
+    }
+
+    /** 设置 SFX 音量倍率（0-1），立即应用到所有音效源并保存 */
+    setSfxVolume(v: number): void {
+        this._sfxVol = Math.max(0, Math.min(1, v));
+        // 高频持久源池即时更新（播放中也会生效）
+        for (const src of this._persistSources.values()) {
+            src.volume = this._muted ? 0 : this._curSfxHighVol;
+        }
+        this._saveVolume();
+    }
+
+    /** 当前 BGM 音量倍率（UI 展示用） */
+    get bgmVolume(): number { return this._bgmVol; }
+    /** 当前 SFX 音量倍率（UI 展示用） */
+    get sfxVolume(): number { return this._sfxVol; }
 
     // ===== 背景音乐 =====
 
@@ -545,7 +615,7 @@ export class AudioManager extends Component {
         this._lastPlay[key] = now;
         try {
             this._oneShotTotal++;
-            this._source.playOneShot(clip, 0.45);
+            this._source.playOneShot(clip, this._curSfxVol);
         } catch (e) {
             console.error('[Clownfish] SFX 播放异常:', e instanceof Error ? e.message : String(e));
         }
@@ -569,6 +639,7 @@ export class AudioManager extends Component {
                 this.node.addChild(n);
                 src = n.addComponent(AudioSource);
                 src.loop = false;
+                src.volume = this._muted ? 0 : this._curSfxHighVol; // 高频音量分层
                 src.clip = clip; // 首次 set clip → 引擎加载一次 → 一个 innerAudioContext
                 this._persistSources.set(key, src);
                 src.play(); // 首次：排队等 clip 加载后自动播

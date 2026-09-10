@@ -319,15 +319,17 @@ export class WorldManager extends Component {
             this._addTerrainSprite(rock, b.x, b.y, b.r * 2, b.r * 2, rand(-15, 15));
         }
 
-        // 尖刺（伤害地形，精灵略大于碰撞半径）
+        // 尖刺（伤害地形：放大 + 红色危险光圈，一眼可辨"这是危险区"）
         for (const sp of this.terrain.spikes) {
-            const sz = T.SPIKE_RADIUS * 2.2;
+            const sz = T.SPIKE_RADIUS * 3.2;   // 33px→48px（放大让玩家看清）
+            this._addDangerZone(sp.x, sp.y, sz);
             this._addTerrainSprite(SPRITES.TERRAIN.SPIKE, sp.x, sp.y, sz, sz);
         }
 
-        // 海胆（伤害地形）
+        // 海胆（伤害地形：同样放大 + 危险光圈）
         for (const u of this.terrain.urchins) {
-            const sz = T.URCHIN_RADIUS * 2.2;
+            const sz = T.URCHIN_RADIUS * 3.2;  // 33px→48px
+            this._addDangerZone(u.x, u.y, sz);
             this._addTerrainSprite(SPRITES.TERRAIN.URCHIN, u.x, u.y, sz, sz);
         }
 
@@ -343,6 +345,25 @@ export class WorldManager extends Component {
         if (rot !== 0) host.setRotationFromEuler(0, 0, rot);
         this.node.addChild(host);
         loadSpriteOnto(host, path, w, h);
+        this._terrainNodes.push(host);
+    }
+
+    /** 危险地形警示圈：尖刺/海胆脚下加半透明红色圆环（"危险区"语言，玩家远远就能看到不能踩） */
+    private _addDangerZone(x: number, y: number, size: number): void {
+        const host = new Node('DangerZone');
+        host.layer = Layers.Enum.DEFAULT;
+        host.setPosition(x, y, 0);
+        this.node.addChild(host);
+        const g = host.addComponent(Graphics);
+        // 外圈红色半透明圆环（视觉半径略大于碰撞）
+        const r = size * 0.72;
+        g.fillColor = new Color(255, 60, 40, 46);   // 半透明红（警示底色）
+        g.circle(0, 0, r);
+        g.fill();
+        g.lineWidth = 3;
+        g.strokeColor = new Color(255, 80, 50, 140); // 红描边
+        g.circle(0, 0, r);
+        g.stroke();
         this._terrainNodes.push(host);
     }
 

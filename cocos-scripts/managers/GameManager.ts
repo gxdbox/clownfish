@@ -1148,6 +1148,7 @@ export class GameManager extends Component {
                 sp.cd = TERRAIN.SPIKE_COOLDOWN;
                 player.damagePlayer(TERRAIN.SPIKE_DAMAGE, sp.x, sp.y);
                 this.audioManager?.spikeHit();
+                this._showDamagePopup(pos.x, pos.y, TERRAIN.SPIKE_DAMAGE, '⚠');
             }
             return;
         }
@@ -1161,8 +1162,34 @@ export class GameManager extends Component {
                 ur.cd = TERRAIN.URCHIN_COOLDOWN;
                 player.damagePlayer(TERRAIN.URCHIN_DAMAGE, ur.x, ur.y);
                 this.audioManager?.spikeHit();
+                this._showDamagePopup(pos.x, pos.y, TERRAIN.URCHIN_DAMAGE, '⚠');
             }
         }
+    }
+
+    /** 受伤飘字：在 (x,y) 处显示 "-N"（红色，上飘后消失），让玩家清楚看到"刚才扣了多少血" */
+    private _showDamagePopup(x: number, y: number, dmg: number, prefix = ''): void {
+        const parent = this.entityManager ?? this.node;
+        if (!parent) return;
+        const lblNode = new Node('DmgPopup');
+        lblNode.setPosition(x, y + 24, 0);
+        parent.addChild(lblNode);
+        const label = lblNode.addComponent(Label);
+        label.string = `${prefix}-${dmg}`;
+        label.fontSize = 22;
+        label.lineHeight = 26;
+        label.color = new Color(255, 90, 70, 255);
+        // 上飘 + 淡出 0.8s
+        let t = 0;
+        const tick = (dt: number): void => {
+            t += dt;
+            if (t >= 0.8) { lblNode.destroy(); return; }
+            const p = lblNode.position;
+            lblNode.setPosition(p.x, p.y + 30 * dt, p.z);
+            label.color = new Color(255, 90, 70, Math.floor(255 * (1 - t / 0.8)));
+            this.scheduleOnce(() => tick(dt), dt);
+        };
+        tick(0.016);
     }
 
     // ===== 升级选项池 =====

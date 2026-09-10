@@ -163,8 +163,12 @@ export class Pickup extends Component {
         const pos = this.node.position;
         const ppos = player.node.position;
 
-        // 磁吸飞行
-        if (this._flying) {
+        // 磁吸飞行（炸弹除外：炸弹是"绝境救赎"道具，必须玩家主动游过去接触才触发，
+        // 让玩家自己决定是否用、什么时候用；自动磁吸会失去决策感）
+        const isBomb = this.type === 'bomb';
+        if (isBomb) {
+            // 炸弹不做磁吸，也不进入拾取范围自动触发；仅靠主动接触拾取（下方判定）
+        } else if (this._flying) {
             const dx = ppos.x - pos.x;
             const dy = ppos.y - pos.y;
             let d = Math.sqrt(dx * dx + dy * dy);
@@ -177,8 +181,8 @@ export class Pickup extends Component {
             this._flying = true;
         }
 
-        // 拾取判定
-        const rr = 14 + 10; // player radius + pickup radius (approx)
+        // 拾取判定（炸弹：主动接触半径更大一点，方便"故意去碰"，但绝不自动吸）
+        const rr = isBomb ? 26 : 14 + 10; // player radius + pickup radius (approx)
         if (dist2(pos.x, pos.y, ppos.x, ppos.y) < rr * rr) {
             this._onPickedUp(player);
         }

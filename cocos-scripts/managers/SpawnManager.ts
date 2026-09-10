@@ -6,7 +6,7 @@
  */
 import { _decorator, Component, Node, Prefab, instantiate, view } from 'cc';
 import { rand, clamp } from '../util';
-import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, BOSS, MAPS, GameState, BOMB } from '../config';
+import { ENEMY, ELITE, WAVE, DROP, PICKUP, WORLD, PLAYER, BOSS, MAPS, GameState, BOMB, CHEST } from '../config';
 import type { WorldManager } from './WorldManager';
 import type { AudioManager } from './AudioManager';
 import type { GameManager } from './GameManager';
@@ -16,6 +16,7 @@ import { EliteAI } from '../components/EliteAI';
 import { BossAI } from '../components/BossAI';
 import { Portal } from '../components/Portal';
 import { Pickup } from '../components/Pickup';
+import { Chest } from '../components/Chest';
 const { ccclass, property } = _decorator;
 
 @ccclass('SpawnManager')
@@ -208,6 +209,43 @@ export class SpawnManager extends Component {
         this._spawnPickupAt(x, y, 'bomb', 0);
         this.gameManager?.notify('💣 炸弹出现了！捡起来轰飞全场！');
         console.log(`[Clownfish] 炸弹掉落 @(${x.toFixed(0)}, ${y.toFixed(0)})`);
+    }
+
+    /** 地图生成时随机放宝箱（避开出生点安全区 + 尽量不与墙重叠；数量取配置 COUNT） */
+    spawnChests(): void {
+        if (!this._entityManager || !this.worldManager) return;
+        const T = CHEST;
+        const s = WORLD.SIZE;
+        const cx = PLAYER.START_X, cy = PLAYER.START_Y;
+        const safe2 = T.SAFE_RADIUS * T.SAFE_RADIUS;
+        let placed = 0, attempts = 0;
+        while (placed < T.COUNT && attempts < 200) {
+            attempts++;
+            const x = rand(80, s - 80);
+            const y = rand(80, s - 80);
+            // 避开出生点
+            if ((x - cx) ** 2 + (y - cy) ** 2 < safe2) continue;
+            // 尽量不放在墙/珊瑚块内（宝箱要能被玩家看到和打到）
+            if (this.worldManager.collideWalls(x, y, T.RADIUS, false)) continue;
+            this._spawnChestAt(x, y);
+            placed++;
+        }
+        console.log(`[Clownfish] 宝箱生成: ${placed} 个`);
+    }
+
+    /** 生成单个宝箱 */
+    private _spawnChestAt(x: number, y: number): void {
+        if (!this._entityManager) return;
+        const node = new Node('Chest');
+        node.setPosition(x, y, 0);
+        this._entityManager.addChild(node);
+        const chest = node.getComponent(Chest) ?? node.addComponent(Chest);
+        if (chest) {
+            chest.worldManager = this.worldManager;
+            chest.spawnManager = this;
+            chest.gameManager = this.gameManager;
+            chest.init(x, y);
+        }
     }
 
     /** 绝境保底检测：场上敌人数量 ≥ 阈值 且 持续超过秒数没减少 → 玩家旁刷炸弹 */
@@ -416,6 +454,11 @@ export class SpawnManager extends Component {
             const bonus = ['range', 'boost', 'shield'][Math.floor(Math.random() * 3)];
             this._spawnPickupAt(x, y, bonus, 0);
         }
+    }
+
+    /** 生成一个拾取物（公开版，供 GameManager 的宝箱掉落调用） */
+    spawnPickupPublic(x: number, y: number, type: string, value: number): void {
+        this._spawnPickupAt(x, y, type, value);
     }
 
     /** 生成一个拾取物 */

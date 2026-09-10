@@ -9,7 +9,7 @@
  * 现改为显式注入 gameManager/targetPlayer/worldManager 引用。
  */
 import { _decorator, Component, Node } from 'cc';
-import { WORLD, BULLET, BOSS, GameState } from '../config';
+import { WORLD, BULLET, BOSS, GameState, CHEST } from '../config';
 import type { PlayerController } from './PlayerController';
 import type { WorldManager } from '../managers/WorldManager';
 import type { GameManager } from '../managers/GameManager';
@@ -117,6 +117,21 @@ export class Bullet extends Component {
 
         for (const child of children) {
             if (!child.isValid || !child.active) continue;
+            // 宝箱：玩家子弹打宝箱（扣血不穿透）
+            const chestComp = child.getComponent('Chest');
+            if (chestComp) {
+                const cpos = child.position;
+                const dx = cpos.x - pos.x;
+                const dy = cpos.y - pos.y;
+                const d2 = dx * dx + dy * dy;
+                const hitRadius = 5 + CHEST.RADIUS;
+                if (d2 < hitRadius * hitRadius) {
+                    (chestComp as any).hurtChest();
+                    this._deactivate();
+                    return;
+                }
+                continue;
+            }
             // BOSS 也必须可命中（此前漏检 BossAI 导致子弹穿过巨蟹等 Boss 无伤害）
             const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI') || child.getComponent('BossAI');
             if (!enemyComp) continue;

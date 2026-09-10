@@ -9,8 +9,8 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS } from '../config';
-import { formatTime, createLabel } from '../util';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST } from '../config';
+import { formatTime, createLabel, clamp } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
 import { AudioManager } from './AudioManager';
@@ -393,6 +393,8 @@ export class GameManager extends Component {
 
             // 生成主题入口（珊瑚礁·海葵洞剧情房）
             this._spawnEntrance();
+            // 生成随机宝箱
+            this.spawnManager?.spawnChests();
 
             // 放置玩家
             step = 'player';
@@ -556,8 +558,41 @@ export class GameManager extends Component {
         this.cameraFollow?.snap(PLAYER.START_X, PLAYER.START_Y);
         this.audioManager?.playBgm(this._mapBgm());
         this.notify(`🌊 进入 ${map.name}（${map.subtitle}）`);
-        // 生成新地图的主题入口
+        // 生成新地图的主题入口 + 随机宝箱
         this._spawnEntrance();
+        this.spawnManager?.spawnChests();
+    }
+
+    /** 宝箱爆开：随机掉宝贝（按 CHEST.DROPS 权重表） */
+    onChestBreak(x: number, y: number): void {
+        if (!this.spawnManager) return;
+        const drops = CHEST.DROPS;
+        let total = 0;
+        for (const d of drops) total += d.weight;
+        let roll = Math.random() * total;
+        let chosen = drops[drops.length - 1];
+        for (const d of drops) {
+            roll -= d.weight;
+            if (roll <= 0) { chosen = d; break; }
+        }
+        // 按 count 掉落（宝石/金币溅射，其他单点）
+        if (chosen.count > 1) {
+            for (let i = 0; i < chosen.count; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const r = Math.random() * chosen.radius;
+                const gx = clamp(x + Math.cos(a) * r, 20, WORLD.SIZE - 20);
+                const gy = clamp(y + Math.sin(a) * r, 20, WORLD.SIZE - 20);
+                this.spawnManager.spawnPickupPublic(gx, gy, chosen.type, chosen.value);
+            }
+        } else {
+            this.spawnManager.spawnPickupPublic(x, y, chosen.type, chosen.value);
+        }
+        const names: Record<string, string> = {
+            gem: '💎 宝石雨！', hpBig: '❤ 大血球！', shield: '🛡 护盾！',
+            boost: '⚡ 加速！', coin: '🪙 金币！', bomb: '💣 炸弹！',
+        };
+        this.notify(`📦 宝箱爆开：${names[chosen.type] ?? '宝贝！'}`);
+        console.log(`[Clownfish] 宝箱爆开 @(${x.toFixed(0)}, ${y.toFixed(0)}) → ${chosen.type}×${chosen.count}`);
     }
 
     // ===== 地图入口（每图一个主题入口：剧情房/商店/隐藏Boss） =====

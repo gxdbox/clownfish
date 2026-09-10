@@ -246,6 +246,26 @@ export const HIDDEN_BOSS = {
     ARENA_HALF: 500,          // 隐藏Boss战斗围栏半边长（更紧凑，压迫感更强）
 };
 
+// ===== 宝箱（子弹打宝箱：打 3 下爆开，随机掉宝贝） =====
+export const CHEST = {
+    COUNT: 7,                 // 每张地图宝箱数量
+    RADIUS: 22,               // 宝箱半径（碰撞/视觉）
+    SIZE: 56,                 // 视觉尺寸
+    HP: 3,                    // 需要打 3 下爆开
+    HIT_FLASH: 0.12,          // 受击闪白时长(秒)
+    BREAK_SHAKE: 8,           // 爆开相机震动强度
+    SAFE_RADIUS: 280,         // 避开出生点安全半径
+    // 掉落表（随机宝贝）
+    DROPS: [
+        { type: 'gem', weight: 30, count: 10, value: 1, radius: 90 },      // 宝石雨
+        { type: 'hpBig', weight: 20, count: 1, value: 0, radius: 0 },      // 大血球
+        { type: 'shield', weight: 15, count: 1, value: 0, radius: 0 },     // 护盾
+        { type: 'boost', weight: 15, count: 1, value: 0, radius: 0 },      // 加速
+        { type: 'coin', weight: 12, count: 4, value: 1, radius: 60 },      // 金币
+        { type: 'bomb', weight: 8, count: 1, value: 0, radius: 0 },        // 炸弹（稀有）
+    ],
+};
+
 // ===== 状态机 =====
 export enum GameState {
     BOOT = 'BOOT',

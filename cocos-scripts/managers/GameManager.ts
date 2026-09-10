@@ -1192,6 +1192,11 @@ export class GameManager extends Component {
         tick(0.016);
     }
 
+    /** 公开版受伤飘字（PlayerController 受击时调用，与尖刺/海胆反馈统一） */
+    showDamagePopup(x: number, y: number, dmg: number, prefix = ''): void {
+        this._showDamagePopup(x, y, dmg, prefix);
+    }
+
     // ===== 升级选项池 =====
 
     private _pickChoices(): UpgradeChoice[] {

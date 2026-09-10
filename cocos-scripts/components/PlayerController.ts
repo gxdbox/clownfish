@@ -549,6 +549,8 @@ export class PlayerController extends Component {
         this.hp -= amount;
         this.invincible = PLAYER.INVINCIBLE_TIME;
         this.hitFlash = 0.12; // 受击闪红 0.12s，让玩家明确感知"被打到了"
+        // 受伤飘字：明确显示扣了多少血（与尖刺/海胆反馈统一，不再"莫名其妙掉血"）
+        this.gameManager?.showDamagePopup(this.node.position.x, this.node.position.y, Math.round(amount));
 
         // 击退
         const a = Math.atan2(this.node.position.y - srcY, this.node.position.x - srcX);

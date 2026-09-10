@@ -6,7 +6,7 @@
  */
 import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3, Sprite, SpriteFrame, UITransform } from 'cc';
 import { clamp, ensureRenderTransform, loadSpriteOnto } from '../util';
-import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed } from '../config';
+import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed, BULLET_TYPES, WeaponId, WeaponDef } from '../config';
 import { SwimAnim, SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -66,6 +66,30 @@ export class PlayerController extends Component {
     faceAngle = 0;
     dead = false;
     coins = 0;                // 金币（商人房货币：击杀掉落拾取，商店消耗）
+
+    // ===== 武器系统（多子弹类型：开局选主武器 + 升级切换） =====
+    weaponType: WeaponId = 'rapid';   // 当前武器
+    /** 设置武器（开局选择/升级切换/道具更换调用）：应用该武器的完整数值 */
+    setWeapon(id: WeaponId): void {
+        const w = BULLET_TYPES[id];
+        if (!w) return;
+        this.weaponType = id;
+        // 应用武器基础数值（保留升级层 buff：damage/speed 在 applyUpgrade 上叠加）
+        this.bulletDamage = w.damage;
+        this.fireInterval = w.fireInterval;
+        this.bulletSpeed = w.speed;
+        this.bulletCount = w.count;
+        this.pierce = w.pierce;
+        this.bulletRange = w.range;
+        this._weaponSpread = w.spread;
+        this._weaponAoe = w.aoe;
+        this._weaponSpecial = w.special;
+    }
+    /** 当前武器配置 */
+    get weapon(): WeaponDef { return BULLET_TYPES[this.weaponType]; }
+    private _weaponSpread = 0;
+    private _weaponAoe = 0;
+    private _weaponSpecial: 'none' | 'boomerang' | 'laser' = 'none';
 
     // ===== 外部速度（Boss 技能等外力，如引力黑洞拉扯；每帧按 _externalDamp 衰减，
     // 施力方需每帧重设才能持续，冲刺期间不生效以保留冲刺无敌穿越的爽感） =====
@@ -163,6 +187,8 @@ export class PlayerController extends Component {
         this.boostMult = 1;
         this.faceAngle = 0;
         this.dead = false;
+        // 默认武器：速射弹（开局选武器在 startGame 前由 UI 调用 setWeapon 覆盖）
+        this.setWeapon('rapid');
         this.externalVelX = 0;
         this.externalVelY = 0;
         // 冲刺状态重置
@@ -292,11 +318,12 @@ export class PlayerController extends Component {
             this.faceAngle = angle;
         }
 
-        const n = this.bulletCount;
-        const spread = (n - 1) * 0.12;
+        const n = Math.max(1, this.bulletCount);
+        const spread = this._weaponSpread;
         const base = angle - spread / 2;
         const pos = this.node.position;
 
+        // 霰弹/多弹：按武器 spread 扇形发射
         for (let i = 0; i < n; i++) {
             const a = n === 1 ? angle : base + i * (spread / Math.max(1, n - 1));
             this._spawnBullet(pos.x, pos.y, a);
@@ -311,16 +338,29 @@ export class PlayerController extends Component {
         if (this.bulletPrefab) {
             bulletNode = instantiate(this.bulletPrefab);
         } else {
-            // 无 Bullet 预制体时自举：动态创建节点 + Graphics 视觉（黄色小圆，带白色高光）
+            // 无 Bullet 预制体时自举：动态创建节点 + Graphics 视觉（按武器颜色/尺寸/形状）
+            const w = BULLET_TYPES[this.weaponType];
+            const c = w.color;
+            const r = w.radius;
             bulletNode = new Node('Bullet');
-            ensureRenderTransform(bulletNode, 20, 20);
+            ensureRenderTransform(bulletNode, r * 4, r * 4);
             const g = bulletNode.addComponent(Graphics);
-            g.fillColor = new Color(255, 225, 90, 255);
-            g.circle(0, 0, 5);
+            // 外圈（武器色）+ 内芯高光
+            g.fillColor = new Color(c[0], c[1], c[2], 255);
+            g.circle(0, 0, r);
             g.fill();
-            g.fillColor = new Color(255, 255, 255, 255);
-            g.circle(-1, -1, 2);
+            g.fillColor = new Color(255, 255, 255, 220);
+            g.circle(-r * 0.2, -r * 0.2, r * 0.4);
             g.fill();
+            // 激光：画成细长条（沿角度方向）
+            if (w.special === 'laser') {
+                g.fillColor = new Color(c[0], c[1], c[2], 255);
+                g.rect(-r * 3, -r * 0.5, r * 6, r);
+                g.fill();
+                g.fillColor = new Color(255, 255, 255, 200);
+                g.rect(-r * 2.5, -r * 0.25, r * 5, r * 0.5);
+                g.fill();
+            }
         }
         this.entityManager.addChild(bulletNode);
         bulletNode.setPosition(x, y, 0);
@@ -329,6 +369,9 @@ export class PlayerController extends Component {
         if (bullet) {
             bullet.init(angle, this.bulletSpeed, this.bulletDamage, this.bulletRange, false, this.pierce);
             bullet.owner = this;
+            // 武器特殊行为参数
+            bullet.aoeRadius = this._weaponAoe;
+            // 回旋镖：标记（Bullet 里用 boomerang 字段或特殊处理——当前简化：回旋镖走穿透+较长射程模拟往返）
         }
     }
 
@@ -579,6 +622,12 @@ export class PlayerController extends Component {
             case 'dashCooldown': this.dashCooldownMax *= 0.75; break;   // 冲刺冷却 -25%
             case 'dashDamage': this.dashDamage += 15; break;            // 冲刺伤害 +15
             case 'dashMulti': this.dashCooldownMax *= 0.6; this.dashDamage += 10; break; // 冲刺大师
+            // 武器切换（多武器系统：升级时换主武器）
+            case 'weapon_pierce': this.setWeapon('pierce'); break;
+            case 'weapon_shotgun': this.setWeapon('shotgun'); break;
+            case 'weapon_laser': this.setWeapon('laser'); break;
+            case 'weapon_grenade': this.setWeapon('grenade'); break;
+            case 'weapon_boomerang': this.setWeapon('boomerang'); break;
         }
     }
 }

@@ -8,7 +8,7 @@
  * 可选链结果恒不等于 PLAYING → 敌弹永不移动。
  * 现改为显式注入 gameManager/targetPlayer/worldManager 引用。
  */
-import { _decorator, Component, Node } from 'cc';
+import { _decorator, Component, Node, Graphics, Color } from 'cc';
 import { WORLD, BULLET, BOSS, GameState, CHEST } from '../config';
 import type { PlayerController } from './PlayerController';
 import type { WorldManager } from '../managers/WorldManager';
@@ -40,6 +40,8 @@ export class Bullet extends Component {
     homing = false;
     /** 追踪转向速率(弧度/秒)，越小越容易被甩开 */
     homingTurnRate = 2.4;
+    /** AOE 爆炸半径（0=无爆炸；榴弹命中后对半径内所有敌人造成伤害） */
+    aoeRadius = 0;
 
     /** 初始化子弹参数 */
     init(angle: number, speed: number, damage: number, range: number, hostile: boolean, pierce: number): void {
@@ -147,8 +149,14 @@ export class Bullet extends Component {
                 // 命中
                 let killed = false;
                 if ('hurtEnemy' in enemyComp) {
-                    (enemyComp as any).hurtEnemy(this._damage, pos.x, pos.y);
-                    killed = (enemyComp as any).hp <= 0;
+                    // 榴弹 AOE：命中点爆炸，对半径内所有敌人造成伤害（本次直接结算所有受波及者）
+                    if (this.aoeRadius > 0) {
+                        this._applyAoeDamage(pos.x, pos.y);
+                        killed = true; // AOE 已在 _applyAoeDamage 处理；本发子弹消失
+                    } else {
+                        (enemyComp as any).hurtEnemy(this._damage, pos.x, pos.y);
+                        killed = (enemyComp as any).hp <= 0;
+                    }
                 }
                 // 命中/击杀音效（穿透多段命中时由 AudioManager 节流）
                 if (this.owner) {
@@ -174,6 +182,35 @@ export class Bullet extends Component {
             player.damagePlayer(this._damage, pos.x, pos.y);
         }
         this._deactivate();
+    }
+
+    /** 榴弹 AOE：对爆炸半径内所有敌人造成伤害（含 BOSS/精英），并触发爆炸视觉 */
+    private _applyAoeDamage(bx: number, by: number): void {
+        const parent = this.node.parent;
+        if (!parent) return;
+        const r2 = this.aoeRadius * this.aoeRadius;
+        for (const child of parent.children) {
+            if (!child.isValid || !child.active) continue;
+            const enemyComp = child.getComponent('EnemyAI') || child.getComponent('EliteAI') || child.getComponent('BossAI');
+            if (!enemyComp) continue;
+            const cpos = child.position;
+            const dx = cpos.x - bx, dy = cpos.y - by;
+            if (dx * dx + dy * dy < r2) {
+                (enemyComp as any).hurtEnemy(this._damage, bx, by);
+            }
+        }
+        // 爆炸视觉：小圆环扩散（轻量 Graphics，挂父节点）
+        try {
+            const boom = new Node('GrenadeBoom');
+            boom.setPosition(bx, by, 0);
+            parent.addChild(boom);
+            const g = boom.addComponent(Graphics);
+            g.lineWidth = 4;
+            g.strokeColor = new Color(255, 200, 90, 220);
+            g.circle(0, 0, this.aoeRadius * 0.5);
+            g.stroke();
+            boom.destroy();  // 一帧即消失（简化视觉）
+        } catch { /* 视觉失败忽略 */ }
     }
 
     private _deactivate(): void {

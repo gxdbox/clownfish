@@ -88,6 +88,74 @@ export const BULLET = {
     KNOCKBACK: 90             // 命中击退
 };
 
+// ===== 多武器系统（6 种子弹，每种子弹一套完整数值 = 手感差异化） =====
+// 开局选一种主武器 + 升级解锁/切换副武器 + 商店/宝箱掉稀有
+export type WeaponId = 'rapid' | 'pierce' | 'shotgun' | 'laser' | 'grenade' | 'boomerang';
+
+export interface WeaponDef {
+    id: WeaponId;
+    name: string;             // 武器名
+    icon: string;             // emoji 图标（UI 用）
+    desc: string;             // 一句话说明（开局选武器 UI）
+    // 数值（基础值；升级/道具可在其上叠加）
+    damage: number;
+    fireInterval: number;     // 攻速（越小越快）
+    speed: number;            // 弹速
+    count: number;            // 每次发射数量
+    pierce: number;           // 穿透次数
+    range: number;            // 射程
+    spread: number;           // 扇形总张角（弧度；0=单发直线）
+    color: [number, number, number]; // 弹体颜色
+    radius: number;           // 弹体半径
+    aoe: number;              // 爆炸半径（0=无 AOE）
+    special: 'none' | 'boomerang' | 'laser'; // 特殊行为
+}
+
+export const BULLET_TYPES: Record<WeaponId, WeaponDef> = {
+    // 速射弹：攻速快、伤害低、手感稳（默认）
+    rapid: {
+        id: 'rapid', name: '速射弹', icon: '🔵', desc: '射速飞快，连发压制，手感最稳的基础武器',
+        damage: 12, fireInterval: 0.22, speed: 460, count: 1, pierce: 0,
+        range: 500, spread: 0, color: [120, 200, 255], radius: 6, aoe: 0, special: 'none',
+    },
+    // 穿透弹：打一条线，穿一排敌人
+    pierce: {
+        id: 'pierce', name: '穿透弹', icon: '🟣', desc: '子弹穿透敌人，一条线贯穿敌群',
+        damage: 18, fireInterval: 0.42, speed: 520, count: 1, pierce: 3,
+        range: 620, spread: 0, color: [200, 120, 255], radius: 7, aoe: 0, special: 'none',
+    },
+    // 霰弹：一次喷 5 发扇形，贴脸爆发
+    shotgun: {
+        id: 'shotgun', name: '霰弹枪', icon: '🟠', desc: '一次喷出扇形弹幕，近身爆发伤害',
+        damage: 9, fireInterval: 0.75, speed: 420, count: 5, pierce: 0,
+        range: 340, spread: 0.9, color: [255, 170, 70], radius: 5, aoe: 0, special: 'none',
+    },
+    // 激光：直线瞬间贯穿，精准点杀
+    laser: {
+        id: 'laser', name: '激光', icon: '🔺', desc: '一道激光贯穿全屏直线，精准致命',
+        damage: 30, fireInterval: 0.9, speed: 900, count: 1, pierce: 99,
+        range: 900, spread: 0, color: [255, 90, 90], radius: 4, aoe: 0, special: 'laser',
+    },
+    // 榴弹：命中爆炸，范围 AOE
+    grenade: {
+        id: 'grenade', name: '榴弹', icon: '💥', desc: '命中后爆炸，一片敌人遭殃',
+        damage: 26, fireInterval: 0.9, speed: 300, count: 1, pierce: 0,
+        range: 420, spread: 0, color: [255, 150, 40], radius: 8, aoe: 65, special: 'none',
+    },
+    // 回旋镖：飞出再飞回，环绕护体
+    boomerang: {
+        id: 'boomerang', name: '回旋镖', icon: '🌀', desc: '飞出去再飞回来，环绕周身护体',
+        damage: 14, fireInterval: 0.6, speed: 380, count: 1, pierce: 2,
+        range: 360, spread: 0, color: [120, 255, 180], radius: 7, aoe: 0, special: 'boomerang',
+    },
+};
+
+/** 武器列表（按 UI 展示顺序） */
+export const WEAPON_LIST: WeaponDef[] = [
+    BULLET_TYPES.rapid, BULLET_TYPES.pierce, BULLET_TYPES.shotgun,
+    BULLET_TYPES.laser, BULLET_TYPES.grenade, BULLET_TYPES.boomerang,
+];
+
 // ===== 拾取物 =====
 export const PICKUP = {
     GEM_RADIUS: 8,

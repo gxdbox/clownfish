@@ -266,6 +266,24 @@ export const CHEST = {
     ],
 };
 
+// ===== Boss 胜利战利品（老虎机式三格抽奖：击败 Boss 后弹出，随机奖品） =====
+// 名称用"战利品"而非"抽奖"，规避微信小游戏博彩类审核红线（机制=随机奖励，合规）
+export const BOSS_REWARD = {
+    // 奖品池（权重表；effect 由 GameManager 应用）
+    ITEMS: [
+        { id: 'gem', icon: '💎', name: '大宝石雨', weight: 30, effect: 'gem20' },       // 掉 20 颗经验宝石
+        { id: 'bomb', icon: '💣', name: '炸弹', weight: 25, effect: 'bomb1' },          // 掉 1 个炸弹
+        { id: 'hp', icon: '❤', name: '大血球', weight: 20, effect: 'hp40' },            // 回 40 血
+        { id: 'speed', icon: '⚡', name: '永久加速', weight: 10, effect: 'speed10' },    // 移速 +10%（永久）
+        { id: 'damage', icon: '🗡', name: '伤害强化', weight: 10, effect: 'damage20' },  // 子弹伤害 +20%（永久）
+        { id: 'shield', icon: '🛡', name: '双护盾', weight: 5, effect: 'shield2' },      // +2 层护盾
+    ],
+    // 老虎机动画参数
+    SPIN_TIME: 2.4,           // 总滚动时长(秒)
+    SPIN_STAGGER: 0.35,       // 每格停下的时间差（三格逐个停）
+    TICK_MS: 70,              // 滚轮切换间隔(毫秒)——越快越有"老虎机"感
+};
+
 // ===== 状态机 =====
 export enum GameState {
     BOOT = 'BOOT',

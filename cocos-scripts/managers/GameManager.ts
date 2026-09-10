@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST, BOSS_REWARD } from '../config';
 import { formatTime, createLabel, clamp } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -21,6 +21,7 @@ import { EnemyAI } from '../components/EnemyAI';
 import { EliteAI } from '../components/EliteAI';
 import { BossAI } from '../components/BossAI';
 import { MapEntrance } from '../components/MapEntrance';
+import { SlotMachine, BossRewardItem } from '../components/SlotMachine';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
 import { LevelUpUI } from '../ui/LevelUpUI';
@@ -64,6 +65,8 @@ export class GameManager extends Component {
     private _heartbeatAcc = 0;       // PLAYING 心跳日志计时（每秒输出实体数量）
     private _roomState: { kind: 'dialogue' | 'shop' | 'boss'; index: number; collected: boolean } | null = null;
     private _hiddenBoss: BossAI | null = null;   // 当前隐藏Boss（熔岩裂隙）
+    private _slotMachine: SlotMachine | null = null; // 当前抽奖机（Boss 战利品）
+    private _pendingAdvance: (() => void) | null = null; // 抽奖完成后的续接（开传送门）
 
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
@@ -533,12 +536,82 @@ export class GameManager extends Component {
         this.spawnManager?.onBossKilled(boss); // 掉落
         const map = MAPS[this.mapIndex % MAPS.length];
         if (this.mapIndex >= MAPS.length - 1) {
-            // 最终世界 BOSS 击杀 = 通关
-            this._victory();
+            // 最终世界 BOSS 击杀 = 通关（抽奖后结算）
+            this._openBossReward(() => {
+                this._victory();
+            });
         } else {
-            this.notify(`💠 ${map.bossName} 被击败！传送门已开启，游进去进入下一世界`);
-            this.spawnManager?.spawnPortal(boss.node.position.x, boss.node.position.y);
+            // 打开胜利战利品抽奖 → 抽完开传送门
+            this._openBossReward(() => {
+                this.notify(`💠 ${map.bossName} 被击败！传送门已开启，游进去进入下一世界`);
+                this.spawnManager?.spawnPortal(boss.node.position.x, boss.node.position.y);
+            });
         }
+    }
+
+    // ===== Boss 胜利战利品（老虎机式抽奖） =====
+
+    /** 打开 Boss 战利品抽奖机（在 Boss 击杀后调用）：
+     *  弹出老虎机 → 滚动 → 中奖应用 → 关闭（回调续接开传送门） */
+    private _openBossReward(onFinish: () => void): void {
+        const canvas = this.node.scene?.getChildByName('Canvas') ?? this.node;
+        if (!canvas) return;
+        // 抽奖期间暂停战斗节奏（暂停普通生成）
+        if (this.spawnManager) this.spawnManager.bossActive = true;
+        const node = new Node('SlotMachine');
+        node.layer = Layers.Enum.UI_2D;
+        canvas.addChild(node);
+        node.setPosition(0, 0, 0);
+        const sm = node.getComponent(SlotMachine) ?? node.addComponent(SlotMachine);
+        this._slotMachine = sm;
+        this._pendingAdvance = onFinish;
+        sm.startSpin(BOSS_REWARD.ITEMS, (item) => this._applyReward(item));
+    }
+
+    /** 应用抽奖奖品效果 */
+    private _applyReward(item: BossRewardItem): void {
+        const p = this.playerController;
+        const sp = this.spawnManager;
+        if (!p) { this._finishBossReward(); return; }
+        const px = p.node.position.x, py = p.node.position.y;
+        switch (item.effect) {
+            case 'gem20':   // 掉 20 颗经验宝石
+                if (sp) for (let i = 0; i < 20; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const r = Math.random() * 120;
+                    sp.spawnPickupPublic(clamp(px + Math.cos(a) * r, 20, WORLD.SIZE - 20),
+                        clamp(py + Math.sin(a) * r, 20, WORLD.SIZE - 20), 'gem', PICKUP.GEM_VALUE);
+                }
+                break;
+            case 'bomb1':   // 掉 1 个炸弹
+                if (sp) sp.spawnPickupPublic(px + 40, py, 'bomb', 0);
+                break;
+            case 'hp40':    // 回 40 血
+                p.hp = Math.min(p.maxHp, p.hp + 40);
+                break;
+            case 'speed10': // 移速 +10%（永久）
+                p.speed = Math.round(p.speed * 1.10);
+                break;
+            case 'damage20': // 子弹伤害 +20%（永久）
+                p.bulletDamage = Math.round(p.bulletDamage * 1.20);
+                break;
+            case 'shield2': // +2 层护盾
+                p.shield = Math.min(PICKUP.SHIELD_MAX, p.shield + 2);
+                break;
+        }
+        this.notify(`🎁 战利品：${item.icon} ${item.name}！`);
+        // 应用后稍等 → 完成抽奖
+        setTimeout(() => this._finishBossReward(), 800);
+    }
+
+    /** 完成抽奖：关闭抽奖机 + 恢复游戏 + 续接（开传送门） */
+    private _finishBossReward(): void {
+        this._slotMachine?.close();
+        this._slotMachine = null;
+        if (this.spawnManager) this.spawnManager.bossActive = false;
+        const next = this._pendingAdvance;
+        this._pendingAdvance = null;
+        if (next) next();
     }
 
     /** 推进到下一张地图（玩家接触传送门触发） */

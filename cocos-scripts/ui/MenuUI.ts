@@ -44,10 +44,7 @@ export class MenuUI extends Component {
         this.muteButton = mute.node;
         this.muteLabel = mute.label;
 
-        // ===== 音量调节（BGM / SFX 独立，−/+ 按钮 + 进度条；触屏友好） =====
-        this._buildVolumeUI();
-
-        createLabel(this.node, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -232, 18, new Color(140, 170, 190, 255));
+        createLabel(this.node, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -176, 18, new Color(140, 170, 190, 255));
 
         this._updateMuteLabel();
     }

@@ -28,7 +28,7 @@ export const PLAYER = {
     BULLET_SPEED: 420,
     BULLET_COUNT: 1,
     BULLET_DAMAGE: 12,
-    BULLET_RANGE: 480,        // 子弹最大飞行距离(px)
+    BULLET_RANGE: 420,        // 子弹最大飞行距离(px)（500→420，避免远距离无脑风筝）
     PICKUP_RANGE: 90,         // 基础拾取半径(px)
     MAGNET_BOOST: 200,        // 磁铁拾取物增幅
     INVINCIBLE_TIME: 1.0,     // 受击无敌时间(秒)
@@ -236,10 +236,10 @@ export const TERRAIN = {
     WALL_MIN_LEN: 160,        // 墙最小长度
     WALL_MAX_LEN: 420,        // 墙最大长度
     WALL_THICKNESS: 18,       // 墙厚度(px)
-    BOULDER_COUNT: 24,        // 圆礁石数量（圆形阻挡）
+    BOULDER_COUNT: 30,        // 圆礁石数量（24→30，海底更密）
     BOULDER_RADIUS_MIN: 26,   // 礁石最小半径
-    BOULDER_RADIUS_MAX: 40,   // 礁石最大半径
-    CORAL_COUNT: 18,          // 珊瑚块数量（矮AABB阻挡）
+    BOULDER_RADIUS_MAX: 42,   // 礁石最大半径
+    CORAL_COUNT: 24,          // 珊瑚块数量（18→24）
     CORAL_W_MIN: 70,          // 珊瑚块最小宽度
     CORAL_W_MAX: 160,         // 珊瑚块最大宽度
     CORAL_H_MIN: 22,          // 珊瑚块最小高度
@@ -248,7 +248,7 @@ export const TERRAIN = {
     URCHIN_RADIUS: 15,
     URCHIN_DAMAGE: 14,        // 海胆伤害（比尖刺高）
     URCHIN_COOLDOWN: 1.0,     // 海胆受伤冷却(秒)
-    DECAL_COUNT: 70,          // 海底装饰数量（珊瑚/海星/贝壳/骷髅）
+    DECAL_COUNT: 130,         // 海底装饰数量（70→130，海底世界感）
     SAFE_RADIUS: 220,         // 出生点周围安全区半径
 };
 
@@ -413,21 +413,21 @@ export interface MapTheme {
 export const MAPS: MapTheme[] = [
     {
         id: 0, name: '珊瑚礁', subtitle: '第一世界 · 浅海', bossSprite: 'boss_crab', bossName: '巨蟹王', bossWave: 5,
-        bossHp: 1200, bossSpeed: 40, bossDamage: 25, bossBurstDamage: 12,
+        bossHp: 1200, bossSpeed: 70, bossDamage: 25, bossBurstDamage: 12,
         tiles: [[18, 70, 96], [22, 82, 112], [14, 60, 84], [28, 92, 124]],
         decals: [[90, 210, 170], [235, 130, 150], [230, 200, 110], [190, 190, 210], [130, 230, 160]],
         enemies: [0, 1], enemyHpMult: 1.0,
     },
     {
         id: 1, name: '深海', subtitle: '第二世界 · 幽暗', bossSprite: 'boss_eel', bossName: '巨鳗王', bossWave: 5,
-        bossHp: 2000, bossSpeed: 46, bossDamage: 32, bossBurstDamage: 16,
+        bossHp: 2000, bossSpeed: 85, bossDamage: 32, bossBurstDamage: 16,
         tiles: [[8, 18, 44], [12, 24, 54], [6, 14, 36], [16, 30, 62]],
         decals: [[90, 180, 240], [140, 110, 220], [60, 200, 200], [110, 130, 230], [70, 160, 220]],
         enemies: [0, 1, 2, 3], enemyHpMult: 1.5,
     },
     {
         id: 2, name: '海底火山', subtitle: '最终世界 · 深渊', bossSprite: 'boss_angler', bossName: '安康鱼王', bossWave: 6,
-        bossHp: 3200, bossSpeed: 52, bossDamage: 40, bossBurstDamage: 20,
+        bossHp: 3200, bossSpeed: 100, bossDamage: 40, bossBurstDamage: 20,
         tiles: [[40, 26, 22], [50, 34, 26], [32, 20, 18], [58, 42, 30]],
         decals: [[255, 120, 60], [240, 180, 60], [255, 90, 90], [200, 130, 60], [255, 160, 80]],
         enemies: [0, 1, 2, 3, 4], enemyHpMult: 2.2,

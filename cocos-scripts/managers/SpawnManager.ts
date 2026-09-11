@@ -310,7 +310,12 @@ export class SpawnManager extends Component {
         if (this.bossActive || this.currentBoss) return;
 
         const mapIndex = this.gameManager?.mapIndex ?? 0;
-        const pos = this._getSpawnPos();
+        // Boss 生成在玩家视野内（短半轴附近，同精英逻辑）——立即可见，
+        // 血条随"看到 Boss"同步出现，不再"血条先出现、Boss 却在 720px 外"
+        const vw = view.getVisibleSize().width;
+        const vh = view.getVisibleSize().height;
+        const dist = Math.min(vw, vh) / 2 + ENEMY.SPAWN_OFFSET;
+        const pos = this._getSpawnPos(dist);
         this.bossActive = true;
 
         const node = this._createEntityNode(null, 'Boss');

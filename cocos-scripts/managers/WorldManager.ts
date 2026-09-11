@@ -282,10 +282,10 @@ export class WorldManager extends Component {
             }
         }
 
-        // 海底装饰（按地图素材池贴小精灵，尺寸/旋转按 type 错开）
+        // 海底装饰（按地图素材池贴小精灵，尺寸/旋转按 type 错开；放大让海底更丰满）
         for (const d of this.terrain.decals) {
             const p = decalPool[d.type % decalPool.length];
-            const sz = 24 + (d.type % 3) * 5;
+            const sz = 34 + (d.type % 3) * 8;   // 24-34px → 34-50px（更明显）
             this._addTerrainSprite(p, d.x, d.y, sz, sz, (d.type * 47) % 360);
         }
 

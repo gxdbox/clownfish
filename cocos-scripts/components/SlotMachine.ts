@@ -45,39 +45,44 @@ export class SlotMachine extends Component {
         return items[items.length - 1];
     }
 
-    /** 构建老虎机 UI（面板 + 三格 + 按钮） */
+    /** 构建老虎机 UI（面板 + 8 格滚轮 2行×4列 + 按钮） */
     private _buildUI(): void {
         // 根节点居中（由调用方挂到 Canvas）
-        createPanel(this.node, 0, 0, 500, 300, new Color(20, 30, 60, 240), 20);
-        const title = createLabel(this.node, '🏆 BOSS 战利品', 0, 110, 30, new Color(255, 215, 110, 255));
-        title.node.setPosition(0, 110, 0);
+        createPanel(this.node, 0, 0, 560, 360, new Color(20, 30, 60, 240), 20);
+        const title = createLabel(this.node, '🏆 BOSS 战利品', 0, 140, 30, new Color(255, 215, 110, 255));
+        title.node.setPosition(0, 140, 0);
 
-        // 三格滚轮（x = -120 / 0 / 120）
-        for (let i = 0; i < 3; i++) {
-            const x = (i - 1) * 140;
-            createPanel(this.node, x, -10, 120, 140, new Color(40, 20, 60, 230), 14);
-            const lbl = createLabel(this.node, '❓', x, -10, 64, new Color(255, 255, 255, 255));
+        // 8 格滚轮（2 行 × 4 列；x = -180 / -60 / 60 / 180，y = 60 / -60）
+        const COLS = 4, ROWS = 2;
+        for (let i = 0; i < COLS * ROWS; i++) {
+            const col = i % COLS;
+            const row = Math.floor(i / COLS);
+            const x = (col - 1.5) * 120;
+            const y = 60 - row * 120;
+            createPanel(this.node, x, y, 110, 100, new Color(40, 20, 60, 230), 12);
+            const lbl = createLabel(this.node, '❓', x, y, 52, new Color(255, 255, 255, 255));
             this._cells.push(lbl);
         }
 
-        // 开始按钮
-        const btn = createButton(this.node, '🎲 开奖', 0, -118, () => {
-            // 已自动开始，按钮仅作"跳过/确认"：提前结束动画
+        // 开始按钮（跳过滚动 / 确认）
+        const btn = createButton(this.node, '🎲 开奖', 0, -148, () => {
             this._finish();
         }, 180, 52);
-        btn.node.setPosition(0, -118, 0);
+        btn.node.setPosition(0, -148, 0);
         // 提示
-        const tip = createLabel(this.node, '点击按钮跳过滚动', 0, -165, 16, new Color(160, 180, 210, 255));
-        tip.node.setPosition(0, -165, 0);
+        const tip = createLabel(this.node, '点击按钮跳过滚动', 0, -200, 16, new Color(160, 180, 210, 255));
+        tip.node.setPosition(0, -200, 0);
     }
 
-    /** 滚动动画：三格随机快速跳动 → 逐个停到结果格 */
+    /** 滚动动画：8 格随机快速跳动 → 逐个停到结果格 */
     private _spin(): void {
         const R = BOSS_REWARD;
-        // 每个格子：滚动 tick 随机图标，然后按 stagger 停在结果
-        for (let i = 0; i < 3; i++) {
+        // 8 格逐个停（每个间隔更短，整体 2.4s 内完成，节奏紧凑）
+        const n = this._cells.length;
+        const staggerTotal = R.SPIN_STAGGER * n;   // 0.35×8 = 2.8s
+        for (let i = 0; i < n; i++) {
             const cell = this._cells[i];
-            const stopDelay = R.SPIN_STAGGER * (i + 1);  // 0.35 / 0.7 / 1.05
+            const stopDelay = (i + 1) * (R.SPIN_TIME / n) * 0.55;  // 按序号递增停下
             // 阶段1：快速跳动（直到 stopDelay 前）
             const tick = setInterval(() => {
                 if (!this._active) { clearInterval(tick); return; }
@@ -94,7 +99,7 @@ export class SlotMachine extends Component {
         // 阶段3：全部停后，稍等 → 完成回调
         setTimeout(() => {
             this._finish();
-        }, (R.SPIN_TIME) * 1000);
+        }, (R.SPIN_TIME + 0.8) * 1000);
     }
 
     /** 高亮格（金色 + 放大脉冲） */

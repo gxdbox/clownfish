@@ -290,8 +290,12 @@ export class BossAI extends Component {
         const a = Math.atan2(ppos.y - pos.y, ppos.x - pos.x);
         this.faceAngle = a;
         this.node.setRotationFromEuler(0, 0, -a * 180 / Math.PI);
-        const nx = pos.x + Math.cos(a) * this.speed * dt;
-        const ny = pos.y + Math.sin(a) * this.speed * dt;
+        // 追击加速：玩家离得越远，Boss 追得越急（消除"玩家放风筝、Boss 慢悠悠"的问题）
+        const dist = Math.sqrt((ppos.x - pos.x) ** 2 + (ppos.y - pos.y) ** 2);
+        const chaseMult = dist > 500 ? 1.35 : dist > 300 ? 1.15 : 1.0;
+        const spd = this.speed * chaseMult;
+        const nx = pos.x + Math.cos(a) * spd * dt;
+        const ny = pos.y + Math.sin(a) * spd * dt;
         const resolved = this.worldManager!.moveResolve(nx, ny, BOSS.RADIUS);
         this.node.setPosition(resolved[0], resolved[1], pos.z);
         this._contactDamage(1);

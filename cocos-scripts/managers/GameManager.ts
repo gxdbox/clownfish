@@ -1219,12 +1219,6 @@ export class GameManager extends Component {
             { id: 'dashCooldown', name: '疾风冲刺', desc: '冲刺冷却 -25%', icon: '💨' },
             { id: 'dashDamage', name: '雷霆冲刺', desc: '冲刺伤害 +15', icon: '⚡' },
             { id: 'dashMulti', name: '冲刺大师', desc: '冲刺冷却 -40% 且伤害 +10', icon: '🌀' },
-            // 武器切换（多武器系统：升级时也能换主武器）
-            { id: 'weapon_pierce', name: '🟣 切换·穿透弹', desc: '换主武器为穿透弹', icon: '🟣' },
-            { id: 'weapon_shotgun', name: '🟠 切换·霰弹枪', desc: '换主武器为霰弹枪', icon: '🟠' },
-            { id: 'weapon_laser', name: '🔺 切换·激光', desc: '换主武器为激光', icon: '🔺' },
-            { id: 'weapon_grenade', name: '💥 切换·榴弹', desc: '换主武器为榴弹', icon: '💥' },
-            { id: 'weapon_boomerang', name: '🌀 切换·回旋镖', desc: '换主武器为回旋镖', icon: '🌀' },
         ];
 
         // 随机选 3 个

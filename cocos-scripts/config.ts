@@ -579,9 +579,15 @@ export const SPRITES = {
         'sprites/enemy_angler',
     ],
     BOSSES: [
-        'sprites/boss_crab',
+        'sprites/boss_crab_king',   // 巨蟹王：黄金战甲+王冠专属素材（区别于精英怪）
         'sprites/boss_eel',
         'sprites/boss_angler',
+    ],
+    // 精英怪素材（第一张图精英=普通巨蟹，区别于 Boss 的黄金巨蟹王）
+    ELITES: [
+        'sprites/boss_crab',        // 精英：普通红色巨蟹（Boss 用 boss_crab_king）
+        'sprites/enemy_eel',
+        'sprites/enemy_angler',
     ],
     PORTAL: 'sprites/portal',
     // 地形元素素材（WorldManager.renderTerrain 贴图替换 Graphics 色块；纯装饰视觉，不影响碰撞）

@@ -329,9 +329,9 @@ export class EliteAI extends Component {
         g.fill();
         // 强制刷新 Graphics（web-mobile 环境需要，同 PlayerController 兜底）
         try { g.flush && g.flush(); } catch {}
-        // 2) AI 素材：加载精英精灵图（复用 Boss 素材作精英视觉，区别于普通敌人），
+        // 2) AI 素材：加载精英精灵图（用 ELITES 池：第一图精英=普通巨蟹，区别于 Boss 黄金巨蟹王）
         //    成功后隐藏上面的 Graphics 兜底（Graphics 在 web-mobile 下可能不渲染 → 精英不可见）
-        loadSpriteOnto(this.node, SPRITES.BOSSES[0], ELITE.RADIUS * 2.4, ELITE.RADIUS * 2.4);
+        loadSpriteOnto(this.node, SPRITES.ELITES[0], ELITE.RADIUS * 2.4, ELITE.RADIUS * 2.4);
         // 附加发光部位（本精英素材为螃蟹，无灯笼 → attachGlow 内部 no-op）
         const sNode = this.node.getChildByName('Sprite');
         if (sNode) this._swim.attachGlow(sNode, SWIM.boss);

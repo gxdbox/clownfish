@@ -45,7 +45,8 @@ export class GameOverUI extends Component {
 
         const retry = createButton(this.node, '🔄 再来一局', 0, -155, () => {
             this.gameManager?.audioManager?.click();
-            this.gameManager?.startGame();
+            // 重玩时重新选武器（先弹武器选择，再开始新一局）
+            this.gameManager?.restartWithWeaponSelect();
         }, 300, 66);
         this.retryButton = retry.node;
     }

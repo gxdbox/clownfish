@@ -372,6 +372,12 @@ export class GameManager extends Component {
 
     // ===== 状态切换 =====
 
+    /** 重玩：先弹武器选择面板再开始（GameOver"再来一局"调用，允许重新选子弹） */
+    restartWithWeaponSelect(): void {
+        this._showUI('menu');
+        this.menuUI?.showWeaponSelect();
+    }
+
     startGame(): void {
         // 分步执行 + try/catch：任一步失败时把异常显示在屏幕上（微信不便抓 console，便于截图定位）
         let step = 'unlock';

@@ -69,18 +69,24 @@ export class PlayerController extends Component {
 
     // ===== 武器系统（多子弹类型：开局选主武器 + 升级切换） =====
     weaponType: WeaponId = 'rapid';   // 当前武器
-    /** 设置武器（开局选择/升级切换/道具更换调用）：应用该武器的完整数值 */
+    // 升级加成层（独立于武器基础值：升级的"多重射击/强化弹药"等跨武器保留，不被 setWeapon 覆盖）
+    private _upgCount = 0;      // 多重射击加成（+N 发）
+    private _upgDamage = 0;     // 强化弹药加成（+N 伤害）
+    private _upgSpeed = 0;      // 高速弹道加成（+N 弹速）
+    private _upgRange = 0;      // 超视距加成（+N 射程）
+    private _upgPierce = 0;     // 穿透弹加成（+N 穿透）
+    /** 设置武器（开局选择/升级切换/道具更换调用）：应用该武器的完整数值 + 叠加升级加成 */
     setWeapon(id: WeaponId): void {
         const w = BULLET_TYPES[id];
         if (!w) return;
         this.weaponType = id;
-        // 应用武器基础数值（保留升级层 buff：damage/speed 在 applyUpgrade 上叠加）
-        this.bulletDamage = w.damage;
+        // 武器基础值 + 升级加成层（升级跨武器保留，不被武器切换覆盖）
+        this.bulletDamage = w.damage + this._upgDamage;
         this.fireInterval = w.fireInterval;
-        this.bulletSpeed = w.speed;
-        this.bulletCount = w.count;
-        this.pierce = w.pierce;
-        this.bulletRange = w.range;
+        this.bulletSpeed = w.speed + this._upgSpeed;
+        this.bulletCount = Math.max(1, w.count + this._upgCount);
+        this.pierce = w.pierce + this._upgPierce;
+        this.bulletRange = w.range + this._upgRange;
         this._weaponSpread = w.spread;
         this._weaponAoe = w.aoe;
         this._weaponSpecial = w.special;
@@ -163,7 +169,7 @@ export class PlayerController extends Component {
         loadSpriteOnto(this.node, SPRITES.PLAYER, 48, 48);
     }
 
-    /** 重置玩家属性（新游戏时调用） */
+    /** 重置玩家属性（新游戏时调用）：保留玩家已选武器（不覆盖为 rapid），重置升级加成 */
     reset(): void {
         this.maxHp = PLAYER.MAX_HP;
         this.hp = PLAYER.MAX_HP;
@@ -171,12 +177,6 @@ export class PlayerController extends Component {
         this.exp = 0;
         this.expNext = this._expNeed(1);
         this.speed = PLAYER.SPEED;
-        this.fireInterval = PLAYER.FIRE_INTERVAL;
-        this.bulletSpeed = PLAYER.BULLET_SPEED;
-        this.bulletCount = PLAYER.BULLET_COUNT;
-        this.bulletDamage = PLAYER.BULLET_DAMAGE;
-        this.bulletRange = PLAYER.BULLET_RANGE;
-        this.pierce = BULLET.PIERCE_DEFAULT;
         this.pickupRange = PLAYER.PICKUP_RANGE;
         this.regen = PLAYER.REGEN_PER_SEC;
         this.fireTimer = 0;
@@ -187,8 +187,14 @@ export class PlayerController extends Component {
         this.boostMult = 1;
         this.faceAngle = 0;
         this.dead = false;
-        // 默认武器：速射弹（开局选武器在 startGame 前由 UI 调用 setWeapon 覆盖）
-        this.setWeapon('rapid');
+        // 升级加成清零（新一局从头来）
+        this._upgCount = 0;
+        this._upgDamage = 0;
+        this._upgSpeed = 0;
+        this._upgRange = 0;
+        this._upgPierce = 0;
+        // 保留玩家开局选的武器（weaponType），重新应用其基础数值
+        this.setWeapon(this.weaponType);
         this.externalVelX = 0;
         this.externalVelY = 0;
         // 冲刺状态重置
@@ -610,26 +616,21 @@ export class PlayerController extends Component {
     /** 应用升级选项 */
     applyUpgrade(choice: UpgradeChoice): void {
         switch (choice.id) {
-            case 'bulletCount': this.bulletCount++; break;
-            case 'bulletDamage': this.bulletDamage += 5; break;
-            case 'bulletSpeed': this.bulletSpeed += 40; break;
+            // 升级加成层：加到独立字段，再重应用当前武器（跨武器保留，不被 setWeapon 覆盖）
+            case 'bulletCount': this._upgCount++; this.setWeapon(this.weaponType); break;
+            case 'bulletDamage': this._upgDamage += 5; this.setWeapon(this.weaponType); break;
+            case 'bulletSpeed': this._upgSpeed += 40; this.setWeapon(this.weaponType); break;
             case 'fireRate': this.fireInterval *= 0.85; break;
             case 'maxHp': this.maxHp += 20; this.hp += 20; break;
             case 'speed': this.speed += 20; break;
-            case 'bulletRange': this.bulletRange += 60; break;
+            case 'bulletRange': this._upgRange += 60; this.setWeapon(this.weaponType); break;
             case 'regen': this.regen += 0.5; break;
-            case 'pierce': this.pierce++; break;
+            case 'pierce': this._upgPierce++; this.setWeapon(this.weaponType); break;
             case 'pickupRange': this.pickupRange += 30; break;
             // 冲刺强化（质变级，马里奥式：强化唯一核心动词）
             case 'dashCooldown': this.dashCooldownMax *= 0.75; break;   // 冲刺冷却 -25%
             case 'dashDamage': this.dashDamage += 15; break;            // 冲刺伤害 +15
             case 'dashMulti': this.dashCooldownMax *= 0.6; this.dashDamage += 10; break; // 冲刺大师
-            // 武器切换（多武器系统：升级时换主武器）
-            case 'weapon_pierce': this.setWeapon('pierce'); break;
-            case 'weapon_shotgun': this.setWeapon('shotgun'); break;
-            case 'weapon_laser': this.setWeapon('laser'); break;
-            case 'weapon_grenade': this.setWeapon('grenade'); break;
-            case 'weapon_boomerang': this.setWeapon('boomerang'); break;
         }
     }
 }

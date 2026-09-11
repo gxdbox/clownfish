@@ -32,7 +32,7 @@ export class MenuUI extends Component {
         const start = createButton(this.node, '▶ 点击开始', 0, -20, () => {
             this.audioManager?.unlock();
             this.audioManager?.click();
-            this._showWeaponSelect();
+            this.showWeaponSelect();
         }, 300, 68);
         this.startButton = start.node;
 
@@ -51,8 +51,9 @@ export class MenuUI extends Component {
 
     // ===== 武器选择面板（开局选主武器） =====
 
-    /** 显示武器选择面板：6 种武器按钮（图标+名+说明），选中后设置武器并开始游戏 */
-    private _showWeaponSelect(): void {
+    /** 显示武器选择面板：6 种武器按钮（图标+名+说明），选中后设置武器并开始游戏。
+     *  公开方法：主菜单"开始"和 GameOver"再来一局"都走这里，保证每次游戏前都能重选武器 */
+    showWeaponSelect(): void {
         // 覆盖层（深色半透明，盖住菜单）
         const overlay = new Node('WeaponSelect');
         overlay.layer = 1 << 25; // UI_2D

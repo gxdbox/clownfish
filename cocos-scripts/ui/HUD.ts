@@ -14,7 +14,7 @@ import type { SpawnManager } from '../managers/SpawnManager';
 const { ccclass } = _decorator;
 
 /** 简易进度条接口（由 createBar 返回） */
-interface Bar { set(p: number): void }
+interface Bar { set(p: number): void; node: Node }
 
 @ccclass('HUD')
 export class HUD extends Component {
@@ -30,6 +30,7 @@ export class HUD extends Component {
     mapLabel: Label | null = null;    // 地图名（顶部中央）
     bossNameLabel: Label | null = null;
     bossBar: Bar | null = null;
+    bossBarNode: Node | null = null;   // 血条根节点（控制显示/隐藏，修复"血条提前/残留"）
 
     gameManager: GameManager | null = null;
     playerController: PlayerController | null = null;
@@ -47,10 +48,12 @@ export class HUD extends Component {
         this.boostLabel = createLabel(this.node, '⚡ 0.0s', 0, 212, 22, new Color(120, 255, 180, 255));
         this.boostLabel.node.active = false;
         this.shieldLabel = createLabel(this.node, '🛡 ×0', -400, 204, 22, new Color(140, 190, 255, 255));
-        // BOSS 血条（默认隐藏，BOSS 出现时显示）
+        // BOSS 血条（默认隐藏，BOSS 出现时显示；名字和血条本体都控制可见性）
         this.bossNameLabel = createLabel(this.node, '', 0, 224, 22, new Color(255, 130, 130, 255));
         this.bossNameLabel.node.active = false;
         this.bossBar = createBar(this.node, 0, 200, 460, 16, new Color(255, 70, 70, 255));
+        this.bossBarNode = this.bossBar.node;
+        this.bossBarNode.active = false;   // 血条本体默认隐藏
     }
 
     onDestroy(): void {
@@ -112,8 +115,10 @@ export class HUD extends Component {
     private _updateBossBar(): void {
         const sm = this.spawnManager;
         const boss = sm ? sm.currentBoss : null;
-        const hasBoss = !!boss && boss.node.active;
+        // 关键修复：Boss 必须存在且节点 active 才显示血条（名字+血条本体一起控制）
+        const hasBoss = !!boss && !!boss.node && boss.node.isValid && boss.node.active;
         if (this.bossNameLabel) this.bossNameLabel.node.active = hasBoss;
+        if (this.bossBarNode) this.bossBarNode.active = hasBoss;
         if (!hasBoss) return;
         if (boss && this.bossNameLabel && this.gameManager) {
             const m = MAPS[this.gameManager.mapIndex % MAPS.length];

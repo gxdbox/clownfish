@@ -188,7 +188,7 @@ export function createButton(parent: Node, text: string, x: number, y: number, o
 }
 
 /** 创建水平进度条，set(p) 更新进度 0~1 */
-export function createBar(parent: Node, x: number, y: number, w: number, h: number, fgColor: Color): { set: (p: number) => void } {
+export function createBar(parent: Node, x: number, y: number, w: number, h: number, fgColor: Color): { set: (p: number) => void; node: Node } {
     const node = new Node('Bar');
     node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
@@ -206,6 +206,7 @@ export function createBar(parent: Node, x: number, y: number, w: number, h: numb
     g.fill();
     fg.setPosition(-w / 2, 0, 0);
     return {
+        node,
         set(p: number) {
             const v = Math.max(0, Math.min(1, p));
             fg.active = v > 0.001;

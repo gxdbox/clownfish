@@ -516,6 +516,8 @@ export class PlayerController extends Component {
     private _updateGhosts(dt: number): void {
         for (let i = this._ghosts.length - 1; i >= 0; i--) {
             const gh = this._ghosts[i];
+            // 防御：节点被实体清场（地图切换）销毁后直接移除，避免对失效节点操作
+            if (!gh.node.isValid) { this._ghosts.splice(i, 1); continue; }
             gh.life -= dt;
             if (gh.life <= 0) {
                 gh.node.destroy();

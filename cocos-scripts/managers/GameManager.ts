@@ -959,6 +959,8 @@ export class GameManager extends Component {
         // 淡出动画
         let fAge = 0;
         const fTick = (dt: number): void => {
+            // 防御：节点被外部销毁（场景切换等）时停止递归
+            if (!flash.isValid) return;
             fAge += dt;
             const t = fAge / bm.SCREEN_FLASH;
             if (t >= 1) { flash.destroy(); return; }
@@ -981,6 +983,8 @@ export class GameManager extends Component {
         const wg = wave.addComponent(Graphics);
         let wAge = 0;
         const wTick = (dt: number): void => {
+            // 防御：节点被外部销毁（实体清场等）时停止递归
+            if (!wave.isValid) return;
             wAge += dt;
             const t = wAge / bm.SHOCKWAVE_TIME;
             if (t >= 1) { wave.destroy(); return; }
@@ -1046,6 +1050,8 @@ export class GameManager extends Component {
                 return;
             }
             for (const d of list) {
+                // 防御：节点已被外部销毁（实体清场级联 destroy）时跳过，读 position 会崩
+                if (!d.node.isValid) continue;
                 d.life += dt;
                 const t = d.life / d.maxLife;
                 if (t >= 1) { if (d.node.isValid) d.node.destroy(); continue; }
@@ -1195,11 +1201,14 @@ export class GameManager extends Component {
         label.color = new Color(255, 90, 70, 255);
         // 上飘 + 淡出 0.8s
         let t = 0;
+        let yOff = 0; // 上飘累计位移（缓存，避免节点被销毁后读 position 崩溃）
         const tick = (dt: number): void => {
+            // 防御：节点被外部销毁（关卡切换/实体清理级联 destroy）时立即停止递归
+            if (!lblNode.isValid) return;
             t += dt;
             if (t >= 0.8) { lblNode.destroy(); return; }
-            const p = lblNode.position;
-            lblNode.setPosition(p.x, p.y + 30 * dt, p.z);
+            yOff += 30 * dt;
+            lblNode.setPosition(x, y + 24 + yOff, 0);
             label.color = new Color(255, 90, 70, Math.floor(255 * (1 - t / 0.8)));
             this.scheduleOnce(() => tick(dt), dt);
         };

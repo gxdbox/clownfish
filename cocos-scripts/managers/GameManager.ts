@@ -8,8 +8,8 @@
  * 仅需「Canvas + Main Camera + 本节点」即可运行，
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
-import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST, BOSS_REWARD } from '../config';
+import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas, game, tween, Vec3, UIOpacity } from 'cc';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST, BOSS_REWARD, BOSS_FX } from '../config';
 import { formatTime, createLabel, clamp } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -67,6 +67,11 @@ export class GameManager extends Component {
     private _hiddenBoss: BossAI | null = null;   // 当前隐藏Boss（熔岩裂隙）
     private _slotMachine: SlotMachine | null = null; // 当前抽奖机（Boss 战利品）
     private _pendingAdvance: (() => void) | null = null; // 抽奖完成后的续接（开传送门）
+    // —— Boss 胜利节拍（慢动作→冻结→横幅→面板） ——
+    private _slowMoEndAt = 0;                        // 慢动作结束的真实时间戳（不用 dt：已被缩放）
+    private _slowMoNext: (() => void) | null = null;  // 冻结拍要续接的下一步（开面板）
+    private _bannerText = '';
+    private _bannerPending = false;                  // 横幅演出中（兼作防重入标志）
 
     onLoad(): void {
         console.log('[Clownfish] GameManager.onLoad 执行');
@@ -549,18 +554,86 @@ export class GameManager extends Component {
         }
         this.spawnManager?.onBossKilled(boss); // 掉落
         const map = MAPS[this.mapIndex % MAPS.length];
+        const name = map.bossName;
         if (this.mapIndex >= MAPS.length - 1) {
-            // 最终世界 BOSS 击杀 = 通关（抽奖后结算）
-            this._openBossReward(() => {
-                this._victory();
-            });
+            // 最终世界 BOSS 击杀 = 通关（走完整胜利节拍 → 抽奖后结算）
+            this._victoryBeats(`🏆 ${name} 被击败！`, () => this._openBossReward(() => { this._victory(); }));
         } else {
-            // 打开胜利战利品抽奖 → 抽完用缓存的位置开传送门
-            this._openBossReward(() => {
-                this.notify(`💠 ${map.bossName} 被击败！传送门已开启，游进去进入下一世界`);
+            // 胜利节拍→ 抽奖→ 抽完用缓存的位置开传送门
+            this._victoryBeats(`🏆 ${name} 被击败！`, () => this._openBossReward(() => {
+                this.notify(`💠 ${name} 被击败！传送门已开启，游进去进入下一世界`);
                 this.spawnManager?.spawnPortal(bossX, bossY);
-            });
+            }));
         }
+    }
+
+    /** 胜利节拍第一拍：慢动作凝滞（世界仍在跑，只是变慢）。
+     *  下一拍才冻结——两者不能同时，否则“慢动作”无对象可慢。 */
+    private _victoryBeats(bannerText: string, then: () => void): void {
+        if (this._slowMoEndAt > 0 || this._bannerPending) return;   // 防重入
+        this.audioManager?.playBgm(BOSS_FX.BGM_KEY);   // 音乐上“松一口气”
+        this._bannerText = bannerText;
+        this._slowMoNext = then;
+        // 慢动作计时必须走真实时间：dt 已被 frameTimeScale 缩放，用它会把 620ms 拖成近 1.8s
+        this._slowMoEndAt = Date.now() + BOSS_FX.SLOWMO_MS;
+        game.frameTimeScale = BOSS_FX.SLOWMO_SCALE;
+    }
+
+    /** 第二拍：慢动作结束 → 全场冻结 + 残余弹幕消散 */
+    private _enterRewardFreeze(): void {
+        this._slowMoEndAt = 0;
+        game.frameTimeScale = 1;                     // 最先恢复：泄漏到下一张图 = 全局变慢且难排查
+        const then = this._slowMoNext;
+        this._slowMoNext = null;
+        // 慢动作期间玩家已死 / 已离开战斗态 → 放弃奖励流程（不能死了还抽奖）
+        if (this.playerController?.dead || this.state !== GameState.PLAYING) return;
+        this.state = GameState.REWARD;               // 15 个组件的 !== PLAYING 门禁同时生效
+        this._clearEnemyBullets();
+        this._bannerPending = true;
+        this._showVictoryBanner(this._bannerText, () => {
+            this._bannerPending = false;
+            if (then) then();
+        });
+    }
+
+    /** 只消敌方弹幕（名为 BossBullet）：不能用 _clearEntities，
+     *  它会一刀切销毁 entityManager 全部子节点，把 Boss 掉的战利品与宝石一起清没 */
+    private _clearEnemyBullets(): void {
+        if (!this.entityManager) return;
+        let n = 0;
+        for (const c of this.entityManager.children.slice()) {
+            if (c.name === 'BossBullet') { c.destroy(); n++; }
+        }
+        if (n > 0) console.log(`[Clownfish] 胜利清场：消散 ${n} 发敌方弹幕`);
+    }
+
+    /** 第三拍：胜利横幅（scale 渐入 + 停留 + 淡出），给“我赢了”一个确认时刻 */
+    private _showVictoryBanner(text: string, then: () => void): void {
+        const canvas = this.node.scene?.getChildByName('Canvas') ?? this.node;
+        if (!canvas) { then(); return; }
+        const bn = new Node('VictoryBanner');
+        bn.layer = Layers.Enum.UI_2D;
+        canvas.addChild(bn);
+        bn.setPosition(0, 0, 0);                     // 居中：此时面板未出，中央无障碍
+        const op = bn.addComponent(UIOpacity);
+        op.opacity = 0;
+        bn.setScale(0.6, 0.6, 1);
+        // 矮屏适配：手机横屏可视高约 460，字号不能按桌面写死
+        const vs = view.getVisibleSize();
+        const size = Math.round(Math.min(46, vs.height * 0.11));
+        const made = createLabel(bn, text, 0, 0, size, new Color(255, 226, 130, 255));
+        if (made.label) made.label.isBold = true;
+        tween(bn).to(BOSS_FX.BANNER_IN, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
+        // tween 走引擎缓动系统，不受 game.state 影响（REWARD 冻结下仍正常播放）
+        tween(op)
+            .to(BOSS_FX.BANNER_IN, { opacity: 255 })
+            .delay(BOSS_FX.BANNER_HOLD)
+            .to(BOSS_FX.BANNER_OUT, { opacity: 0 })
+            .call(() => {
+                if (bn.isValid) bn.destroy();
+                if (this.isValid) then();
+            })
+            .start();
     }
 
     // ===== Boss 胜利战利品（老虎机式抽奖） =====
@@ -877,6 +950,7 @@ export class GameManager extends Component {
 
     /** 清空场上实体（敌人/子弹/拾取物/传送门/残影） */
     private _clearEntities(): void {
+        game.frameTimeScale = 1;   // 换图/重开必然终止慢动作，防止倍速泄漏到下一张图
         if (!this.entityManager) return;
         const children = this.entityManager.children.slice();
         for (const child of children) {
@@ -1089,6 +1163,10 @@ export class GameManager extends Component {
         // 钳制 dt
         if (dt > 0.033) dt = 0.033;
 
+        // 慢动作到点（真实时间）→ 进入冻结拍。必须放在 switch 之前：
+        // 切到 REWARD 后本方法会于后续帧早退，漏检就把 frameTimeScale 永久留在 0.35
+        if (this._slowMoEndAt > 0 && Date.now() >= this._slowMoEndAt) this._enterRewardFreeze();
+
         switch (this.state) {
             case GameState.PLAYING:
                 this._updatePlaying(dt);
@@ -1097,8 +1175,9 @@ export class GameManager extends Component {
             case GameState.MENU:
                 // UI 动画更新
                 break;
+            case GameState.REWARD:
             case GameState.GAMEOVER:
-                // 相机震屏衰减
+                // 相机震屏衰减（胜利瞬间的 shake(14) 要能自然停下）
                 this.cameraFollow?.updateShake(dt);
                 break;
             case GameState.PAUSED:

@@ -381,6 +381,7 @@ export enum GameState {
     PLAYING = 'PLAYING',
     PAUSED = 'PAUSED',
     LEVELUP = 'LEVELUP',
+    REWARD = 'REWARD',     // Boss 胜利节拍：击杀后冻结全场（全部组件的 !== PLAYING 门禁自动停摆）
     GAMEOVER = 'GAMEOVER'
 }
 
@@ -414,7 +415,23 @@ export const DASH = {
     TRAIL_COUNT: 6,           // 残影数量
 };
 
+// ===== Boss 胜利节拍（击杀 → 慢动作 → 冻结 → 横幅 → 面板渐入） =====
+// 解决的问题：以前 Boss 死亡同一帧就把全屏面板糊到玩家脸上，且 state 仍为 PLAYING，
+// 残余弹幕与小怪在遮罩背后照常追击玩家（看不见 → 被偷打死）。
+// 慢动作用真实时间计时：dt 已被 frameTimeScale 缩放，拿它计时会把 0.62s 拖成近 1.8s。
+export const BOSS_FX = {
+    SLOWMO_SCALE: 0.35,      // 慢动作时间倍率（此间世界仍在跑，只是变慢）
+    SLOWMO_MS: 620,          // 慢动作真实时长(ms)：弹速与自身移速同比例下降，反而有更大裕度
+    BANNER_IN: 0.26,         // 横幅渐入(秒)
+    BANNER_HOLD: 0.9,        // 横幅停留(秒)：给“我赢了”一个确认时刻
+    BANNER_OUT: 0.28,        // 横幅渐出(秒)
+    PANEL_FADE: 0.3,         // 面板渐入(秒)
+    BGM_KEY: 'victory' as const,  // 击杀瞬间切胜利 BGM（不在狂暴鼓点里读奖品文案；as const 保留字面量类型以匹配 BgmKey）
+};
+
 // ===== 多地图（3 个世界：珊瑚礁→深海→海底火山，每图一个 BOSS，击败开传送门连通） =====
+// bossHp 定标：玩家 DPS 随等级乘法成比（多重射击/强化弹药/快速装填），故 Boss 战时长主要靠
+// “转阶段强制演出 + 单次伤害封顶”保证，HP 取典型 DPS 下能走全三阶段递进的量（目标 35~45 秒）。
 export interface MapTheme {
     id: number;
     name: string;                 // 地图名

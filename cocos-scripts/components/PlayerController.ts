@@ -75,13 +75,19 @@ export class PlayerController extends Component {
     private _upgSpeed = 0;      // 高速弹道加成（+N 弹速）
     private _upgRange = 0;      // 超视距加成（+N 射程）
     private _upgPierce = 0;     // 穿透弹加成（+N 穿透）
+    private _upgDamagePct = 1;  // 百分比伤害加成层（Boss 战利品 +20% 等，跨武器保留）
+    /** 武器永久伤害加成（百分比，跨武器保留）：Boss 战利品 damage20 调用 */
+    addDamagePct(pct: number): void {
+        this._upgDamagePct *= (1 + pct);
+        this.setWeapon(this.weaponType);
+    }
     /** 设置武器（开局选择/升级切换/道具更换调用）：应用该武器的完整数值 + 叠加升级加成 */
     setWeapon(id: WeaponId): void {
         const w = BULLET_TYPES[id];
         if (!w) return;
         this.weaponType = id;
         // 武器基础值 + 升级加成层（升级跨武器保留，不被武器切换覆盖）
-        this.bulletDamage = w.damage + this._upgDamage;
+        this.bulletDamage = Math.round((w.damage + this._upgDamage) * this._upgDamagePct);
         this.fireInterval = w.fireInterval;
         this.bulletSpeed = w.speed + this._upgSpeed;
         this.bulletCount = Math.max(1, w.count + this._upgCount);
@@ -193,6 +199,7 @@ export class PlayerController extends Component {
         this._upgSpeed = 0;
         this._upgRange = 0;
         this._upgPierce = 0;
+        this._upgDamagePct = 1;
         // 保留玩家开局选的武器（weaponType），重新应用其基础数值
         this.setWeapon(this.weaponType);
         this.externalVelX = 0;
@@ -325,7 +332,9 @@ export class PlayerController extends Component {
         }
 
         const n = Math.max(1, this.bulletCount);
-        const spread = this._weaponSpread;
+        // 多弹时保证最小扇形展开：rapid 等 spread=0 的武器升级"多重射击"后，
+        // 若保持 0 spread 则所有子弹同一角度完全重叠，视觉上"只有一颗子弹"
+        const spread = n > 1 && this._weaponSpread < 0.1 ? 0.14 : this._weaponSpread;
         const base = angle - spread / 2;
         const pos = this.node.position;
 

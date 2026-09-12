@@ -606,22 +606,26 @@ export class GameManager extends Component {
             case 'speed10': // 移速 +10%（永久）
                 p.speed = Math.round(p.speed * 1.10);
                 break;
-            case 'damage20': // 子弹伤害 +20%（永久）
-                p.bulletDamage = Math.round(p.bulletDamage * 1.20);
+            case 'damage20': // 子弹伤害 +20%（永久，跨武器保留：走升级加成层，防被 setWeapon 覆盖）
+                p.addDamagePct(0.2);
                 break;
             case 'shield2': // +2 层护盾
                 p.shield = Math.min(PICKUP.SHIELD_MAX, p.shield + 2);
                 break;
         }
         this.notify(`🎁 战利品：${item.icon} ${item.name}！`);
-        // 应用后稍等 → 完成抽奖
-        setTimeout(() => this._finishBossReward(), 800);
+        // 应用后稍等 → 完成抽奖（走引擎调度器：节点失效即停，避免裸定时器访问已销毁对象）
+        this.scheduleOnce(() => {
+            if (this.isValid) this._finishBossReward();
+        }, 0.8);
     }
 
     /** 完成抽奖：关闭抽奖机 + 恢复游戏 + 续接（开传送门） */
     private _finishBossReward(): void {
         this._slotMachine?.close();
         this._slotMachine = null;
+        game.frameTimeScale = 1;                                            // 保底：慢动作绝不泄漏
+        if (this.state === GameState.REWARD) this.state = GameState.PLAYING; // 解冻：必须在续接回调之前
         if (this.spawnManager) this.spawnManager.bossActive = false;
         const next = this._pendingAdvance;
         this._pendingAdvance = null;

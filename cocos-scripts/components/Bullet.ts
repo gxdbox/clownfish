@@ -34,6 +34,8 @@ export class Bullet extends Component {
     private _traveled = 0;
     private _hostile = false;
     private _pierce = 0;
+    /** init 传入的原始穿透额度（含玩家升级）：回旋镖折返按此重置，不用常量抹掉升级 */
+    private _pierceBase = 0;
     private _active = true;
 
     /** 追踪弹（仅敌弹）：每帧朝玩家有限转向；默认 false 不影响现有敌弹 */
@@ -66,7 +68,7 @@ export class Bullet extends Component {
     private _beginReturn(): void {
         this._returning = true;
         this._retT = 0;
-        this._pierce = BOOMERANG.RETURN_PIERCE;
+        this._pierce = this._pierceBase;   // 来回两段额度一致：保留玩家的穿透升级
         this._hitIds.clear();
         this.homing = true;
         this.homingTurnRate = BOOMERANG.TURN_RATE;
@@ -86,6 +88,7 @@ export class Bullet extends Component {
         this._traveled = 0;
         this._hostile = hostile;
         this._pierce = pierce;
+        this._pierceBase = pierce;
         this._active = true;
         this._returning = false;
         this._spent = false;

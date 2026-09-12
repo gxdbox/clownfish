@@ -456,11 +456,15 @@ export class GameManager extends Component {
         console.error('[Clownfish] ' + msg);
         const canvas = this.node.scene?.getChildByName('Canvas') ?? find('Canvas') ?? undefined;
         const parent = canvas ?? this.node;
+        // 基于可见区动态定位：矮屏（手机横屏可见高约 460）上固定 -300 会被裁到屏幕外
+        const tipY = -(view.getVisibleSize().height / 2 - 30);
         let tip = parent.getChildByName('ErrorTip');
         if (!tip) {
-            tip = createLabel(parent, '', 0, -300, 22, new Color(255, 90, 90, 255)).node;
+            tip = createLabel(parent, '', 0, tipY, 22, new Color(255, 90, 90, 255)).node;
             tip.name = 'ErrorTip';
-            tip.setPosition(0, -300, 0);
+            tip.setPosition(0, tipY, 0);
+        } else {
+            tip.setPosition(0, tipY, 0);
         }
         const label = tip.getComponent(Label) ?? tip.addComponent(Label);
         label.overflow = Label.Overflow.RESIZE_HEIGHT;

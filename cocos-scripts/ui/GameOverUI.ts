@@ -5,7 +5,7 @@
  * UI 全部动态创建（不依赖场景节点，避免引用缺失导致空画面）。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Color, Label, Node } from 'cc';
+import { _decorator, Component, Color, Label, Node, UITransform, Widget, view } from 'cc';
 import { createLabel, createPanel, createButton } from '../util';
 import { formatTime } from '../util';
 import type { GameManager } from '../managers/GameManager';
@@ -33,17 +33,33 @@ export class GameOverUI extends Component {
     gameManager: GameManager | null = null;
 
     onLoad(): void {
+        // 强制面板几何：锚点居中 + 归位，避免场景配置漂移导致 UI 偏移裁切
+        const w = this.node.getComponent(Widget);
+        if (w) w.enabled = false;
+        const uit = this.node.getComponent(UITransform) || this.node.addComponent(UITransform);
+        uit.setAnchorPoint(0.5, 0.5);
+        this.node.setPosition(0, 0, 0);
+
+        // 内容容器：矮屏（手机横屏可见高约 460）时整体缩放兜底，防止底部按钮被裁切
+        const content = new Node('Content');
+        content.layer = this.node.layer;
+        this.node.addChild(content);
+        content.setPosition(0, 0, 0);
+        const vs = view.getVisibleSize();
+        const s = Math.min(1, vs.height / 540);
+        content.setScale(s, s, 1);
+
         // 动态创建结算界面
-        createPanel(this.node, 0, 0, 540, 520, new Color(8, 18, 38, 240), 20);
+        createPanel(content, 0, 0, 540, 520, new Color(8, 18, 38, 240), 20);
 
-        this.titleLabel = createLabel(this.node, '💀 游戏结束', 0, 200, 50, new Color(255, 120, 120, 255));
-        this.subLabel = createLabel(this.node, '再来一次吧', 0, 150, 20, new Color(150, 190, 220, 255));
-        this.timeLabel = createLabel(this.node, '存活 00:00', 0, 95, 28);
-        this.killsLabel = createLabel(this.node, '击杀 0', 0, 45, 28);
-        this.waveLabel = createLabel(this.node, '到达第 1 波', 0, -5, 28);
-        this.levelLabel = createLabel(this.node, '等级 Lv.1', 0, -55, 28);
+        this.titleLabel = createLabel(content, '💀 游戏结束', 0, 200, 50, new Color(255, 120, 120, 255));
+        this.subLabel = createLabel(content, '再来一次吧', 0, 150, 20, new Color(150, 190, 220, 255));
+        this.timeLabel = createLabel(content, '存活 00:00', 0, 95, 28);
+        this.killsLabel = createLabel(content, '击杀 0', 0, 45, 28);
+        this.waveLabel = createLabel(content, '到达第 1 波', 0, -5, 28);
+        this.levelLabel = createLabel(content, '等级 Lv.1', 0, -55, 28);
 
-        const retry = createButton(this.node, '🔄 再来一局', 0, -155, () => {
+        const retry = createButton(content, '🔄 再来一局', 0, -155, () => {
             this.gameManager?.audioManager?.click();
             // 重玩时重新选武器（先弹武器选择，再开始新一局）
             this.gameManager?.restartWithWeaponSelect();

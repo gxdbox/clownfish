@@ -4,7 +4,7 @@
  * UI 全部动态创建（不依赖场景节点，避免引用缺失导致空画面）。
  * Cocos Creator 3.8.8 迁移版
  */
-import { _decorator, Component, Color, Label, Node } from 'cc';
+import { _decorator, Component, Color, Label, Node, UITransform, Widget, view } from 'cc';
 import { createLabel, createPanel, createButton, createBar } from '../util';
 import { WEAPON_LIST } from '../config';
 import type { GameManager } from '../managers/GameManager';
@@ -23,20 +23,36 @@ export class MenuUI extends Component {
     audioManager: AudioManager | null = null;
 
     onLoad(): void {
+        // 强制面板几何：锚点居中 + 归位，避免场景配置漂移导致 UI 偏移裁切
+        const w = this.node.getComponent(Widget);
+        if (w) w.enabled = false;
+        const uit = this.node.getComponent(UITransform) || this.node.addComponent(UITransform);
+        uit.setAnchorPoint(0.5, 0.5);
+        this.node.setPosition(0, 0, 0);
+
+        // 内容容器：矮屏（手机横屏可见高约 460）时整体缩放兜底，防止底部元素被裁切
+        const content = new Node('Content');
+        content.layer = this.node.layer;
+        this.node.addChild(content);
+        content.setPosition(0, 0, 0);
+        const vs = view.getVisibleSize();
+        const s = Math.min(1, vs.height / 500);
+        content.setScale(s, s, 1);
+
         // 动态创建菜单 UI
-        createPanel(this.node, 0, 0, 540, 470, new Color(6, 28, 50, 235), 24);
+        createPanel(content, 0, 0, 540, 470, new Color(6, 28, 50, 235), 24);
 
-        this.titleLabel = createLabel(this.node, '🐟 小丑鱼大冒险', 0, 140, 52, new Color(255, 218, 110, 255));
-        createLabel(this.node, '深海生存 · 升级进化', 0, 76, 22, new Color(170, 205, 230, 255));
+        this.titleLabel = createLabel(content, '🐟 小丑鱼大冒险', 0, 140, 52, new Color(255, 218, 110, 255));
+        createLabel(content, '深海生存 · 升级进化', 0, 76, 22, new Color(170, 205, 230, 255));
 
-        const start = createButton(this.node, '▶ 点击开始', 0, -20, () => {
+        const start = createButton(content, '▶ 点击开始', 0, -20, () => {
             this.audioManager?.unlock();
             this.audioManager?.click();
             this.showWeaponSelect();
         }, 300, 68);
         this.startButton = start.node;
 
-        const mute = createButton(this.node, '🔊 音效开', 0, -112, () => {
+        const mute = createButton(content, '🔊 音效开', 0, -112, () => {
             this.audioManager?.click();
             this.audioManager?.toggleMute();
             this._updateMuteLabel();
@@ -44,7 +60,7 @@ export class MenuUI extends Component {
         this.muteButton = mute.node;
         this.muteLabel = mute.label;
 
-        createLabel(this.node, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -176, 18, new Color(140, 170, 190, 255));
+        createLabel(content, 'WASD 移动 · 空格射击 · 触屏双摇杆', 0, -176, 18, new Color(140, 170, 190, 255));
 
         this._updateMuteLabel();
     }
@@ -59,23 +75,33 @@ export class MenuUI extends Component {
         overlay.layer = 1 << 25; // UI_2D
         this.node.addChild(overlay);
         overlay.setPosition(0, 0, 0);
-        // 背景面板（比菜单大一圈）
-        createPanel(overlay, 0, 0, 700, 640, new Color(6, 20, 40, 240), 20);
 
-        createLabel(overlay, '🔫 选择你的武器', 0, 270, 34, new Color(255, 218, 110, 255));
-        createLabel(overlay, '每种武器手感完全不同，选你喜欢的风格', 0, 220, 18, new Color(160, 190, 215, 255));
+        // 内容容器：布局已压缩至 ±218（460 可见高内完整显示），更矮的设备整体缩放兜底
+        const content = new Node('Content');
+        content.layer = overlay.layer;
+        overlay.addChild(content);
+        content.setPosition(0, 0, 0);
+        const vs = view.getVisibleSize();
+        const s = Math.min(1, vs.height / 450);
+        content.setScale(s, s, 1);
 
-        // 6 种武器：2 行 × 3 列
+        // 背景面板（紧凑布局：内容垂直范围 ±218）
+        createPanel(content, 0, 0, 700, 460, new Color(6, 20, 40, 240), 20);
+
+        createLabel(content, '🔫 选择你的武器', 0, 195, 34, new Color(255, 218, 110, 255));
+        createLabel(content, '每种武器手感完全不同，选你喜欢的风格', 0, 158, 18, new Color(160, 190, 215, 255));
+
+        // 6 种武器：2 行 × 3 列（行距 130，原 160 会撞出矮屏可视区）
         WEAPON_LIST.forEach((w, i) => {
             const col = i % 3;
             const row = Math.floor(i / 3);
             const x = (col - 1) * 210;
-            const y = 100 - row * 160;
-            this._weaponButton(overlay, w, x, y);
+            const y = 50 - row * 130;
+            this._weaponButton(content, w, x, y);
         });
 
         // 取消按钮（回到菜单）
-        createButton(overlay, '✖ 返回', 0, -285, () => {
+        createButton(content, '✖ 返回', 0, -185, () => {
             this.audioManager?.click();
             overlay.destroy();
         }, 160, 48);

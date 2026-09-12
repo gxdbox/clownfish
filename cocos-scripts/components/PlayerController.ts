@@ -6,7 +6,7 @@
  */
 import { _decorator, Component, Node, Prefab, instantiate, Graphics, Color, Vec3, Sprite, SpriteFrame, UITransform } from 'cc';
 import { clamp, ensureRenderTransform, loadSpriteOnto } from '../util';
-import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed, BULLET_TYPES, WeaponId, WeaponDef } from '../config';
+import { PLAYER, BULLET, PICKUP, WORLD, GameState, DASH, SPRITES, expNeed, BULLET_TYPES, WeaponId, WeaponDef, BulletShape } from '../config';
 import { SwimAnim, SWIM } from '../swimAnim';
 import type { WorldManager } from '../managers/WorldManager';
 import type { AudioManager } from '../managers/AudioManager';
@@ -349,33 +349,17 @@ export class PlayerController extends Component {
 
     private _spawnBullet(x: number, y: number, angle: number): void {
         if (!this.entityManager) return;
+        const w = BULLET_TYPES[this.weaponType];
         let bulletNode: Node;
         if (this.bulletPrefab) {
             bulletNode = instantiate(this.bulletPrefab);
         } else {
-            // 无 Bullet 预制体时自举：动态创建节点 + Graphics 视觉（按武器颜色/尺寸/形状）
-            const w = BULLET_TYPES[this.weaponType];
-            const c = w.color;
-            const r = w.radius;
+            // 无 Bullet 预制体时自举：动态创建节点 + Graphics 弹体（按武器形状/颜色）
             bulletNode = new Node('Bullet');
-            ensureRenderTransform(bulletNode, r * 4, r * 4);
+            // 包围盒按最长轮廓给足（beam 横向约 9r）：Graphics 不裁剪，此值不影响渲染
+            ensureRenderTransform(bulletNode, w.radius * 12, w.radius * 12);
             const g = bulletNode.addComponent(Graphics);
-            // 外圈（武器色）+ 内芯高光
-            g.fillColor = new Color(c[0], c[1], c[2], 255);
-            g.circle(0, 0, r);
-            g.fill();
-            g.fillColor = new Color(255, 255, 255, 220);
-            g.circle(-r * 0.2, -r * 0.2, r * 0.4);
-            g.fill();
-            // 激光：画成细长条（沿角度方向）
-            if (w.special === 'laser') {
-                g.fillColor = new Color(c[0], c[1], c[2], 255);
-                g.rect(-r * 3, -r * 0.5, r * 6, r);
-                g.fill();
-                g.fillColor = new Color(255, 255, 255, 200);
-                g.rect(-r * 2.5, -r * 0.25, r * 5, r * 0.5);
-                g.fill();
-            }
+            this._drawBulletShape(g, w.shape, w.color, w.radius);
         }
         this.entityManager.addChild(bulletNode);
         bulletNode.setPosition(x, y, 0);
@@ -386,7 +370,103 @@ export class PlayerController extends Component {
             bullet.owner = this;
             // 武器特殊行为参数
             bullet.aoeRadius = this._weaponAoe;
-            // 回旋镖：标记（Bullet 里用 boomerang 字段或特殊处理——当前简化：回旋镖走穿透+较长射程模拟往返）
+            // 回旋镖：视觉自转 + 真回旋弹道（行为由 special 决定，外观由 shape 决定）
+            if (w.special === 'boomerang') {
+                bullet.spin = 540;         // 双叶轮廓只有转起来才有“回旋”记忆点
+                bullet.boomerang = true;   // 飞出→折返→回主人，参数见 config.BOOMERANG
+            }
+        }
+    }
+
+    /** 按武器轮廓绘制弹体。+X 为弹头方向（节点已由 Bullet.init 随飞行方向旋转）。
+     *  实际弹体仅 8~16px，细节会被抹平，故辨识度全靠低频特征：长宽比、整体跨度、
+     *  有无突出物——针又细又长、光束最长、榴弹圆钝带尾、双叶占位最大、
+     *  霰弹主体拖飞砂、速射弹最短小。 */
+    private _drawBulletShape(g: Graphics, shape: BulletShape, c: [number, number, number], r: number): void {
+        const col = new Color(c[0], c[1], c[2], 255);
+        const hi = new Color(255, 255, 255, 225);
+        const dk = new Color(Math.max(0, c[0] - 70), Math.max(0, c[1] - 70), Math.max(0, c[2] - 70), 255);
+        g.fillColor = col;
+        switch (shape) {
+            case 'needle':    // 穿透弹：极细长针，头尖尾收 → 全场最“长”的弹
+                g.moveTo(r * 3.2, 0);
+                g.lineTo(r * 0.2, r * 0.55);
+                g.lineTo(-r * 2.4, r * 0.1);
+                g.lineTo(-r * 2.4, -r * 0.1);
+                g.lineTo(r * 0.2, -r * 0.55);
+                g.close(); g.fill();
+                g.fillColor = hi;
+                g.moveTo(r * 2.6, 0);
+                g.lineTo(r * 0.3, r * 0.2);
+                g.lineTo(r * 0.3, -r * 0.2);
+                g.close(); g.fill();
+                break;
+            case 'pellet':    // 霰弹：不规则碎块 + 两颗拉开距离的飞砂（靠“拖尾粒子”区分）
+                g.moveTo(r * 1.2, r * 0.3);
+                g.lineTo(r * 0.4, r * 1.05);
+                g.lineTo(-r * 0.8, r * 0.7);
+                g.lineTo(-r * 1.0, -r * 0.5);
+                g.lineTo(r * 0.2, -r * 1.0);
+                g.close(); g.fill();
+                g.fillColor = dk;
+                g.circle(-r * 2.7, r * 0.9, r * 0.38);
+                g.circle(-r * 3.2, -r * 0.6, r * 0.3);
+                g.fill();
+                g.fillColor = hi;
+                g.circle(r * 0.35, r * 0.3, r * 0.3);
+                g.fill();
+                break;
+            case 'beam':      // 激光：最长最直的光束 + 前端亮帽
+                g.rect(-r * 4.4, -r * 0.5, r * 9.4, r);
+                g.fill();
+                g.fillColor = hi;
+                g.rect(-r * 3.8, -r * 0.2, r * 8.4, r * 0.4);
+                g.fill();
+                g.circle(r * 4.8, 0, r * 0.7);
+                g.fill();
+                break;
+            case 'shell':     // 榴弹：最大的钝圆弹体 + 单条居中尾翼 → 1:1 下读作“炮弹”
+                g.circle(0, 0, r * 1.05);
+                g.fill();
+                g.fillColor = dk;
+                g.moveTo(-r * 0.8, r * 0.5);
+                g.lineTo(-r * 2.4, r * 0.9);
+                g.lineTo(-r * 2.4, -r * 0.9);
+                g.lineTo(-r * 0.8, -r * 0.5);
+                g.close(); g.fill();
+                g.fillColor = hi;
+                g.circle(-r * 0.3, r * 0.35, r * 0.32);
+                g.fill();
+                break;
+            case 'blade':     // 回旋镖：两叶在中心重叠成一体（不靠白点桥接）+ 同色枢纽
+                g.moveTo(0, r * 0.35);
+                g.lineTo(r * 2.1, r * 1.3);
+                g.lineTo(r * 1.25, r * 2.15);
+                g.lineTo(-r * 0.15, r * 0.95);
+                g.close();
+                g.moveTo(0, -r * 0.35);
+                g.lineTo(-r * 2.1, -r * 1.3);
+                g.lineTo(-r * 1.25, -r * 2.15);
+                g.lineTo(r * 0.15, -r * 0.95);
+                g.close();
+                g.circle(0, 0, r * 0.62);
+                g.fill();
+                g.fillColor = hi;
+                g.circle(0, 0, r * 0.26);
+                g.fill();
+                break;
+            case 'droplet':   // 速射弹：最短小的水滴，轻快密集
+            default:
+                g.circle(r * 0.35, 0, r * 0.85);
+                g.moveTo(r * 0.55, r * 0.7);
+                g.lineTo(-r * 2.3, 0);
+                g.lineTo(r * 0.55, -r * 0.7);
+                g.close();
+                g.fill();
+                g.fillColor = hi;
+                g.circle(r * 0.55, -r * 0.22, r * 0.3);
+                g.fill();
+                break;
         }
     }
 

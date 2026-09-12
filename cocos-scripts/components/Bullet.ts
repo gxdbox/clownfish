@@ -9,7 +9,7 @@
  * 现改为显式注入 gameManager/targetPlayer/worldManager 引用。
  */
 import { _decorator, Component, Node, Graphics, Color } from 'cc';
-import { WORLD, BULLET, BOSS, GameState, CHEST } from '../config';
+import { WORLD, BULLET, BOSS, GameState, CHEST, PLAYER, BOOMERANG } from '../config';
 import type { PlayerController } from './PlayerController';
 import type { WorldManager } from '../managers/WorldManager';
 import type { GameManager } from '../managers/GameManager';
@@ -43,6 +43,40 @@ export class Bullet extends Component {
     /** AOE 爆炸半径（0=无爆炸；榴弹命中后对半径内所有敌人造成伤害） */
     aoeRadius = 0;
 
+    /** 视觉自转角速度(度/秒)：双叶轮廓的回旋镖转起来才有“回旋”记忆点；0=不转 */
+    spin = 0;
+    private _spinBase = 0;   // 朝向基准角（init 写入，自转在其上叠加）
+    private _spinT = 0;
+    private _faceDeg = 0;    // 当前飞行朝向（度）；自转叠加在其上
+
+    /** 回旋镖弹道：飞出→折返→回主人，全程可命中（由 PlayerController 注入） */
+    boomerang = false;
+    private _returning = false;              // 已进入折返段
+    private _spent = false;                  // 来回额度用尽：不再造成伤害，继续飞回
+    private _lifeT = 0;                      // 存活时长（兜底销毁）
+    private _retT = 0;                       // 折返段已飞时长（超时了结）
+    private _hitIds = new Set<Node>();       // 本段已结算目标（防同一敌人逐帧连续受击）
+
+    /** 统一写朝向：飞行方向 + 自转累计（否则追踪分支会覆盖掉自转） */
+    private _syncRot(): void {
+        this.node.setRotationFromEuler(0, 0, this._faceDeg + (this.spin !== 0 ? this.spin * this._spinT : 0));
+    }
+
+    /** 进入折返段：提速 + 重置穿透额度与命中记录，开启朝主人的有限转向追踪 */
+    private _beginReturn(): void {
+        this._returning = true;
+        this._retT = 0;
+        this._pierce = BOOMERANG.RETURN_PIERCE;
+        this._hitIds.clear();
+        this.homing = true;
+        this.homingTurnRate = BOOMERANG.TURN_RATE;
+        // 折返段提速：既造成“被拽回手”的手感，更保证玩家全速后撤时仍追得上（否则镖永远回不来）
+        const sp = Math.sqrt(this._vx * this._vx + this._vy * this._vy) * BOOMERANG.RETURN_SPEED;
+        const dir = Math.atan2(this._vy, this._vx);
+        this._vx = Math.cos(dir) * sp;
+        this._vy = Math.sin(dir) * sp;
+    }
+
     /** 初始化子弹参数 */
     init(angle: number, speed: number, damage: number, range: number, hostile: boolean, pierce: number): void {
         this._vx = Math.cos(angle) * speed;
@@ -53,7 +87,15 @@ export class Bullet extends Component {
         this._hostile = hostile;
         this._pierce = pierce;
         this._active = true;
-        this.node.setRotationFromEuler(0, 0, -angle * 180 / Math.PI);
+        this._returning = false;
+        this._spent = false;
+        this._lifeT = 0;
+        this._retT = 0;
+        this._hitIds.clear();
+        this._spinT = 0;
+        this._faceDeg = -angle * 180 / Math.PI;
+        this._spinBase = this._faceDeg;
+        this._syncRot();
     }
 
     update(dt: number): void {
@@ -77,7 +119,19 @@ export class Bullet extends Component {
         }
 
         // 生命周期终止
-        if (this._traveled >= this._range ||
+        if (this.boomerang) {
+            // 回旋镖不看射程耗尽：飞出到达即折返，由“被接住/兜底寿命/出界”结束
+            this._lifeT += dt;
+            if (this._returning) this._retT += dt;
+            if (this._lifeT >= BOOMERANG.MAX_LIFE || this._retT >= BOOMERANG.RETURN_MAX ||
+                nx < 0 || nx > WORLD.SIZE || ny < 0 || ny > WORLD.SIZE) {
+                this._deactivate();
+                return;
+            }
+            if (!this._returning && this._traveled >= this._range * BOOMERANG.OUT_RATIO) {
+                this._beginReturn();
+            }
+        } else if (this._traveled >= this._range ||
             nx < 0 || nx > WORLD.SIZE || ny < 0 || ny > WORLD.SIZE) {
             this._deactivate();
             return;
@@ -85,9 +139,17 @@ export class Bullet extends Component {
 
         this.node.setPosition(nx, ny, pos.z);
 
-        // 追踪弹（仅敌弹）：有限转向朝玩家，防止无限追踪导致无解弹幕
-        if (this._hostile && this.homing && this.targetPlayer && !this.targetPlayer.dead && this.homingTurnRate > 0) {
-            const ppos = this.targetPlayer.node.position;
+        // 视觉自转（仅玩家弹）：在朝向上叠加，不改变飞行向量
+        if (this.spin !== 0 && !this._hostile) {
+            this._spinT += dt;
+            this._syncRot();
+        }
+
+        // 追踪：敌弹朝玩家；回旋镖折返段朝主人（有限转向 → 绕出自然弧线）
+        const chase = this._hostile ? this.targetPlayer
+            : (this.boomerang && this._returning ? this.owner : null);
+        if (this.homing && chase && chase.node && !chase.dead && this.homingTurnRate > 0) {
+            const ppos = chase.node.position;
             const cur = Math.atan2(this._vy, this._vx);
             const want = Math.atan2(ppos.y - ny, ppos.x - nx);
             let diff = want - cur;
@@ -99,7 +161,19 @@ export class Bullet extends Component {
             const na = cur + turn;
             this._vx = Math.cos(na) * spd;
             this._vy = Math.sin(na) * spd;
-            this.node.setRotationFromEuler(0, 0, -na * 180 / Math.PI);
+            this._faceDeg = -na * 180 / Math.PI;
+            this._syncRot();
+        }
+
+        // 折返段：飞回主人即被接住
+        if (this._returning && this.owner && this.owner.node) {
+            const op = this.owner.node.position;
+            const dx = op.x - nx, dy = op.y - ny;
+            const catchR = PLAYER.RADIUS + BOOMERANG.CATCH_EXTRA;
+            if (dx * dx + dy * dy < catchR * catchR) {
+                this._deactivate();
+                return;
+            }
         }
 
         if (!this._hostile) {
@@ -111,6 +185,8 @@ export class Bullet extends Component {
 
     /** 玩家子弹命中敌人 */
     private _checkHitEnemy(): void {
+        // 回旋镖空手折返：不再结算任何伤害
+        if (this._spent) return;
         // 简化版：遍历 EntityManager 子节点
         const parent = this.node.parent;
         if (!parent) return;
@@ -119,6 +195,9 @@ export class Bullet extends Component {
 
         for (const child of children) {
             if (!child.isValid || !child.active) continue;
+            // 回旋镖：同一目标每段只结算一次（弹体在命中区内会停留多帧）
+            // 注：仅限回旋镖——穿透弹/激光的贴脸多段命中属现有平衡，不动
+            if (this.boomerang && this._hitIds.has(child)) continue;
             // 宝箱：玩家子弹打宝箱（扣血不穿透）
             const chestComp = child.getComponent('Chest');
             if (chestComp) {
@@ -129,8 +208,14 @@ export class Bullet extends Component {
                 const hitRadius = 5 + CHEST.RADIUS;
                 if (d2 < hitRadius * hitRadius) {
                     (chestComp as any).hurtChest();
-                    this._deactivate();
-                    return;
+                    if (this.boomerang) {
+                        // 回旋镖开宝箱不消失：折返飞回，但本次投掷不再二次生效
+                        if (!this._returning) this._beginReturn();
+                        this._spent = true;
+                    } else {
+                        this._deactivate();
+                        return;
+                    }
                 }
                 continue;
             }
@@ -164,8 +249,13 @@ export class Bullet extends Component {
                     else this.owner.audioManager?.hit();
                 }
 
+                if (this.boomerang) this._hitIds.add(child);
                 if (this._pierce > 0) {
                     this._pierce--;
+                } else if (this.boomerang) {
+                    // 额度耗尽：飞出段就地折返；折返段则空手飞回主人
+                    if (!this._returning) this._beginReturn();
+                    else this._spent = true;
                 } else {
                     this._deactivate();
                     return;

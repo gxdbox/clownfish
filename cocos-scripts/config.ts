@@ -88,9 +88,25 @@ export const BULLET = {
     KNOCKBACK: 90             // 命中击退
 };
 
+// ===== 回旋镖飞行弹道（飞出→折返→回主人） =====
+// 参数经仿真扫参定下：保证玩家全速（含升级后）后撤时镖仍能追回接住，
+// 否则“回旋”会退化成无限追踪飞盘或直接丢镖。
+export const BOOMERANG = {
+    OUT_RATIO: 0.55,        // 飞出射程占比：到达即折返（实际最远冲到 ~277px）
+    TURN_RATE: 10.0,        // 折返转向速率(弧度/秒)：180° 掉头约 0.31s，甩出一个弯就回头
+    RETURN_SPEED: 1.8,      // 折返段提速倍率：关键——不提速则追不上后撤的主人（380 vs 260）
+    RETURN_MAX: 1.5,        // 折返段最长时限(秒)：超时即了结，防被地形/卡位时无限追踪
+    CATCH_EXTRA: 8,         // 距主人 PLAYER.RADIUS + 此值 即算接住
+    MAX_LIFE: 4,            // 兜底存活秒数：主人死亡时防弹体永驻
+    RETURN_PIERCE: 2,       // 折返阶段重置的穿透额度（回来那一段仍可割草）
+};
+
 // ===== 多武器系统（6 种子弹，每种子弹一套完整数值 = 手感差异化） =====
 // 开局选一种主武器 + 升级解锁/切换副武器 + 商店/宝箱掉稀有
 export type WeaponId = 'rapid' | 'pierce' | 'shotgun' | 'laser' | 'grenade' | 'boomerang';
+
+/** 弹体轮廓类型：六种武器各自一种，剪影层面即可区分（颜色仅作二次确认） */
+export type BulletShape = 'droplet' | 'needle' | 'pellet' | 'beam' | 'shell' | 'blade';
 
 export interface WeaponDef {
     id: WeaponId;
@@ -106,6 +122,9 @@ export interface WeaponDef {
     range: number;            // 射程
     spread: number;           // 扇形总张角（弧度；0=单发直线）
     color: [number, number, number]; // 弹体颜色
+    /** 弹体轮廓：辨识度靠形状（缩略剪影就能分辨），颜色只作二次确认。
+     *  选型原则：形状要“说出”武器行为——针形=贯穿、圆弹带尾翼=会炸、月牙=会转回来 */
+    shape: BulletShape;
     radius: number;           // 弹体半径
     aoe: number;              // 爆炸半径（0=无 AOE）
     special: 'none' | 'boomerang' | 'laser'; // 特殊行为
@@ -114,39 +133,39 @@ export interface WeaponDef {
 export const BULLET_TYPES: Record<WeaponId, WeaponDef> = {
     // 速射弹：攻速快、伤害低、手感稳（默认）
     rapid: {
-        id: 'rapid', name: '速射弹', icon: '🔵', desc: '射速飞快，连发压制，手感最稳的基础武器',
+        id: 'rapid', name: '速射弹', icon: '💧', desc: '射速飞快，连发压制，手感最稳的基础武器',
         damage: 12, fireInterval: 0.22, speed: 460, count: 1, pierce: 0,
-        range: 500, spread: 0, color: [120, 200, 255], radius: 6, aoe: 0, special: 'none',
+        range: 500, spread: 0, color: [120, 200, 255], shape: 'droplet', radius: 6, aoe: 0, special: 'none',
     },
     // 穿透弹：打一条线，穿一排敌人
     pierce: {
-        id: 'pierce', name: '穿透弹', icon: '🟣', desc: '子弹穿透敌人，一条线贯穿敌群',
+        id: 'pierce', name: '穿透弹', icon: '📌', desc: '子弹穿透敌人，一条线贯穿敌群',
         damage: 18, fireInterval: 0.42, speed: 520, count: 1, pierce: 3,
-        range: 620, spread: 0, color: [200, 120, 255], radius: 7, aoe: 0, special: 'none',
+        range: 620, spread: 0, color: [200, 120, 255], shape: 'needle', radius: 7, aoe: 0, special: 'none',
     },
     // 霰弹：一次喷 5 发扇形，贴脸爆发
     shotgun: {
-        id: 'shotgun', name: '霰弹枪', icon: '🟠', desc: '一次喷出扇形弹幕，近身爆发伤害',
+        id: 'shotgun', name: '霰弹枪', icon: '✳️', desc: '一次喷出扇形弹幕，近身爆发伤害',
         damage: 9, fireInterval: 0.75, speed: 420, count: 5, pierce: 0,
-        range: 340, spread: 0.9, color: [255, 170, 70], radius: 5, aoe: 0, special: 'none',
+        range: 340, spread: 0.9, color: [255, 170, 70], shape: 'pellet', radius: 5, aoe: 0, special: 'none',
     },
     // 激光：直线瞬间贯穿，精准点杀
     laser: {
-        id: 'laser', name: '激光', icon: '🔺', desc: '一道激光贯穿全屏直线，精准致命',
+        id: 'laser', name: '激光', icon: '⚡', desc: '一道激光贯穿全屏直线，精准致命',
         damage: 30, fireInterval: 0.9, speed: 900, count: 1, pierce: 99,
-        range: 900, spread: 0, color: [255, 90, 90], radius: 4, aoe: 0, special: 'laser',
+        range: 900, spread: 0, color: [255, 90, 90], shape: 'beam', radius: 4, aoe: 0, special: 'laser',
     },
     // 榴弹：命中爆炸，范围 AOE
     grenade: {
-        id: 'grenade', name: '榴弹', icon: '💥', desc: '命中后爆炸，一片敌人遭殃',
+        id: 'grenade', name: '榴弹', icon: '💣', desc: '命中后爆炸，一片敌人遭殃',
         damage: 26, fireInterval: 0.9, speed: 300, count: 1, pierce: 0,
-        range: 420, spread: 0, color: [255, 150, 40], radius: 8, aoe: 65, special: 'none',
+        range: 420, spread: 0, color: [255, 150, 40], shape: 'shell', radius: 8, aoe: 65, special: 'none',
     },
     // 回旋镖：飞出再飞回，环绕护体
     boomerang: {
-        id: 'boomerang', name: '回旋镖', icon: '🌀', desc: '飞出去再飞回来，环绕周身护体',
+        id: 'boomerang', name: '回旋镖', icon: '🌀', desc: '飞出后自动折返，来回两段都能割草',
         damage: 14, fireInterval: 0.6, speed: 380, count: 1, pierce: 2,
-        range: 360, spread: 0, color: [120, 255, 180], radius: 7, aoe: 0, special: 'boomerang',
+        range: 360, spread: 0, color: [120, 255, 180], shape: 'blade', radius: 7, aoe: 0, special: 'boomerang',
     },
 };
 

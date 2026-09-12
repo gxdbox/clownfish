@@ -289,15 +289,22 @@ export class WorldManager extends Component {
             this._addTerrainSprite(p, d.x, d.y, sz, sz, (d.type * 47) % 360);
         }
 
-        // 墙体（礁石墙 = 沿墙体中线的岩块列；视觉略高于碰撞矩形，读取为石脊）
+        // 墙体（礁石墙 = 沿墙体长轴排布的岩块列）
+        // 两个必须修正的渲染/碰撞不一致点：
+        //  1) 按墙的实际朝向排布：垂直墙 w=厚18 / h=长160~420，若统一沿 x 排布会只在中心画 2 块，
+        //     剩下整条墙只有碰撞没有视觉（玩家撞到“看不见的障碍物”）
+        //  2) 间隔≤岩石尺寸：旧 len/56 得到 80px 间隔但岩石只 40px，石脊中间留大缝，
+        //     玩家以为能钻过去，但碰撞是整条连续 AABB，依旧被挡
         const rock = SPRITES.TERRAIN.ROCK;
         for (const w of this.terrain.walls) {
-            const cy = w.y + w.h / 2;
-            const n = clamp(Math.round(w.w / 56), 2, 8);
+            const horizontal = w.w >= w.h;
+            const len = horizontal ? w.w : w.h;
+            const n = clamp(Math.round(len / 34), 2, 14);
             for (let i = 0; i < n; i++) {
-                const fx = w.x + (w.w / (n - 1)) * i;
-                const fy = cy + rand(-4, 4);
-                const sz = 40 + rand(-5, 6);
+                const along = (len / (n - 1)) * i;   // 沿长轴偏移
+                const fx = horizontal ? w.x + along : w.x + w.w / 2 + rand(-4, 4);
+                const fy = horizontal ? w.y + w.h / 2 + rand(-4, 4) : w.y + along;
+                const sz = 42 + rand(-4, 6);
                 this._addTerrainSprite(rock, fx, fy, sz, sz, rand(-25, 25));
             }
         }

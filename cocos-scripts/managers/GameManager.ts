@@ -9,7 +9,7 @@
  * 避免升级面板等节点缺失导致弹框不显示 → 升级后卡死。
  */
 import { _decorator, Component, Node, sys, view, input, Input, EventKeyboard, KeyCode, find, UITransform, Graphics, Camera, Color, Label, RenderRoot2D, Layers, Canvas as UICanvas, game, tween, Vec3, UIOpacity } from 'cc';
-import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST, BOSS_REWARD, BOSS_FX } from '../config';
+import { GameState, UI_CONFIG, TERRAIN, PLAYER, WORLD, MAPS, BOMB, ENTRANCE, NPC_SCRIPT, SHOP_ITEMS, PICKUP, HIDDEN_BOSS, CHEST, BOSS_REWARD, BOSS_FX, UPGRADE_ADAPT } from '../config';
 import { formatTime, createLabel, clamp } from '../util';
 import { WorldManager } from './WorldManager';
 import { SpawnManager } from './SpawnManager';
@@ -1323,9 +1323,20 @@ export class GameManager extends Component {
             { id: 'dashMulti', name: '冲刺大师', desc: '冲刺冷却 -40% 且伤害 +10', icon: '🌀' },
         ];
 
+        // 按当前武器适配子弹类升级：剔除零收益项 / 换成等效语义文案（见 config.UPGRADE_ADAPT）
+        // 否则激光玩家抽到“穿透弹”（基础 99 已是无限穿透）就是白选一次三选一
+        const weapon = this.playerController ? this.playerController.weaponType : null;
+        const pool: UpgradeChoice[] = [];
+        for (const u of allUpgrades) {
+            const ad = weapon ? UPGRADE_ADAPT[u.id] : undefined;
+            if (!ad || !weapon) { pool.push(u); continue; }
+            if (ad.drop && ad.drop.indexOf(weapon) >= 0) continue;
+            const cv = ad.convert ? ad.convert[weapon] : undefined;
+            pool.push(cv ? { id: u.id, name: cv.name, desc: cv.desc, icon: cv.icon } : u);
+        }
+
         // 随机选 3 个
         const choices: UpgradeChoice[] = [];
-        const pool = [...allUpgrades];
         for (let i = 0; i < 3 && pool.length > 0; i++) {
             const idx = Math.floor(Math.random() * pool.length);
             choices.push(pool.splice(idx, 1)[0]);

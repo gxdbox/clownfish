@@ -75,6 +75,7 @@ export class PlayerController extends Component {
     private _upgSpeed = 0;      // 高速弹道加成（+N 弹速）
     private _upgRange = 0;      // 超视距加成（+N 射程）
     private _upgPierce = 0;     // 穿透弹加成（+N 穿透）
+    private _upgAoePct = 0;     // 爆裂装药加成（+N% 爆炸范围；榴弹的“穿透”升级换算而来，见 config.UPGRADE_ADAPT）
     private _upgDamagePct = 1;  // 百分比伤害加成层（Boss 战利品 +20% 等，跨武器保留）
     /** 武器永久伤害加成（百分比，跨武器保留）：Boss 战利品 damage20 调用 */
     addDamagePct(pct: number): void {
@@ -94,7 +95,8 @@ export class PlayerController extends Component {
         this.pierce = w.pierce + this._upgPierce;
         this.bulletRange = w.range + this._upgRange;
         this._weaponSpread = w.spread;
-        this._weaponAoe = w.aoe;
+        // 爆炸范围：仅对本身有 AOE 的武器叠加成（其余武器抽不到爆裂装药，不凭空造 AOE）
+        this._weaponAoe = w.aoe > 0 ? Math.round(w.aoe * (1 + this._upgAoePct)) : 0;
         this._weaponSpecial = w.special;
     }
     /** 当前武器配置 */
@@ -199,6 +201,7 @@ export class PlayerController extends Component {
         this._upgSpeed = 0;
         this._upgRange = 0;
         this._upgPierce = 0;
+        this._upgAoePct = 0;
         this._upgDamagePct = 1;
         // 保留玩家开局选的武器（weaponType），重新应用其基础数值
         this.setWeapon(this.weaponType);
@@ -716,7 +719,12 @@ export class PlayerController extends Component {
             case 'speed': this.speed += 20; break;
             case 'bulletRange': this._upgRange += 60; this.setWeapon(this.weaponType); break;
             case 'regen': this.regen += 0.5; break;
-            case 'pierce': this._upgPierce++; this.setWeapon(this.weaponType); break;
+            case 'pierce':
+                // 榴弹命中即爆，穿透额度用不上 → 抽池已换成“爆裂装药”，id 仍为 pierce，此处兑现为爆炸范围收益
+                if (this.weaponType === 'grenade') this._upgAoePct += 0.12;
+                else this._upgPierce++;
+                this.setWeapon(this.weaponType);
+                break;
             case 'pickupRange': this.pickupRange += 30; break;
             // 冲刺强化（质变级，马里奥式：强化唯一核心动词）
             case 'dashCooldown': this.dashCooldownMax *= 0.75; break;   // 冲刺冷却 -25%

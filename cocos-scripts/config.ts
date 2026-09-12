@@ -236,6 +236,28 @@ export const UPGRADE = {
     CARD_ANIM_TIME: 0.35      // 卡牌弹入动画时长
 };
 
+/** 升级项在特定武器上的替身文案（id 不变，仅文案/图标换，实际效果见 PlayerController.applyUpgrade） */
+export interface UpgradeVariant {
+    name: string;
+    desc: string;
+    icon: string;
+}
+
+/** 子弹类升级的武器适配：部分升级项在特定武器上零收益，抽池时剔除或换语义 */
+export const UPGRADE_ADAPT: Record<string, {
+    /** 该武器抽不到此项 */
+    drop?: WeaponId[];
+    /** 换语义：id 不变，文案换成玩家能看懂的等效收益 */
+    convert?: Partial<Record<WeaponId, UpgradeVariant>>;
+}> = {
+    // 穿透：激光基础 99 已是“无限穿透”（再加无意义）→ 剔除；
+    // 榴弹命中即爆炸并销毁子弹（Bullet._onHitEnemy），穿透额度永远用不上 → 换成爆炸范围
+    pierce: {
+        drop: ['laser'],
+        convert: { grenade: { name: '爆裂装药', desc: '爆炸范围 +12%', icon: '💥' } },
+    },
+};
+
 // ===== 波次/难度 =====
 export const WAVE = {
     DURATION: 20,             // 每波时长(秒)

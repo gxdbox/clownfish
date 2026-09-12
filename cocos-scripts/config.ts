@@ -416,21 +416,21 @@ export interface MapTheme {
 export const MAPS: MapTheme[] = [
     {
         id: 0, name: '珊瑚礁', subtitle: '第一世界 · 浅海', bossSprite: 'boss_crab', bossName: '巨蟹王', bossWave: 5,
-        bossHp: 1200, bossSpeed: 70, bossDamage: 25, bossBurstDamage: 12,
+        bossHp: 2600, bossSpeed: 70, bossDamage: 25, bossBurstDamage: 12,
         tiles: [[18, 70, 96], [22, 82, 112], [14, 60, 84], [28, 92, 124]],
         decals: [[90, 210, 170], [235, 130, 150], [230, 200, 110], [190, 190, 210], [130, 230, 160]],
         enemies: [0, 1], enemyHpMult: 1.0,
     },
     {
         id: 1, name: '深海', subtitle: '第二世界 · 幽暗', bossSprite: 'boss_eel', bossName: '巨鳗王', bossWave: 5,
-        bossHp: 2000, bossSpeed: 85, bossDamage: 32, bossBurstDamage: 16,
+        bossHp: 4200, bossSpeed: 85, bossDamage: 32, bossBurstDamage: 16,
         tiles: [[8, 18, 44], [12, 24, 54], [6, 14, 36], [16, 30, 62]],
         decals: [[90, 180, 240], [140, 110, 220], [60, 200, 200], [110, 130, 230], [70, 160, 220]],
         enemies: [0, 1, 2, 3], enemyHpMult: 1.5,
     },
     {
         id: 2, name: '海底火山', subtitle: '最终世界 · 深渊', bossSprite: 'boss_angler', bossName: '安康鱼王', bossWave: 6,
-        bossHp: 3200, bossSpeed: 100, bossDamage: 40, bossBurstDamage: 20,
+        bossHp: 6400, bossSpeed: 100, bossDamage: 40, bossBurstDamage: 20,
         tiles: [[40, 26, 22], [50, 34, 26], [32, 20, 18], [58, 42, 30]],
         decals: [[255, 120, 60], [240, 180, 60], [255, 90, 90], [200, 130, 60], [255, 160, 80]],
         enemies: [0, 1, 2, 3, 4], enemyHpMult: 2.2,
@@ -482,6 +482,13 @@ export const BOSS = {
     DOUBLE_RING_SPEED_MULT: 1.15, // 第二环弹速倍率
     HOMING: true,               // 二档：瞄准弹升级为追踪弹
     HOMING_TURN_RATE: 2.4,      // 追踪弹转向速率(弧度/秒)（有限追踪，可甩开）
+
+    // —— 转阶段强制演出（高 DPS 下保证 Boss 机制必然被看到，而不是被直接跳过） ——
+    ROAR_TIME: 1.4,           // 咆哮时长(秒)：期间无敌、不攻击、震开玩家
+    ROAR_PUSH: 430,           // 咆哮冲击波推开玩家的速度(px/s)，打断贴身输出
+    DMG_CAP_RATIO: 0.08,      // 单发伤害封顶（maxHp×8%）：削掉榴弹 AOE 与暴击跳字的峰值
+    DMG_WINDOW: 0.5,          // 爆发抑制窗口(秒)：同帧多发命中（霰弹+多重射击）必须累计限幅，
+    DMG_WINDOW_CAP: 0.04,     // 窗口内累计伤害封顶（maxHp×4%）→ 瞬时 DPS 上限 8% HP/秒，最短约 12.5 秒打死
 
     // —— 召唤小怪（狂暴后周期召唤该图普通小怪，复用 EnemyAI 逻辑） ——
     SUMMON_ENRAGE_TIER: 1,      // ≥一档狂暴后开始召唤

@@ -76,6 +76,12 @@ export class BossAI extends Component {
 
     // ===== 狂暴阶段 =====
     private _enrageTier = 0;       // 0 / 1 / 2
+    /** 转阶段咆哮计时（>0 期间无敌且不攻击，保证阶段机制必然被玩家看到） */
+    private _roarTimer = 0;
+    private _roarTier = 0;         // 本次咆哮要演出的目标档位
+    /** 爆发抑制：滑动窗口内累计伤害（防同帧多发命中叠加成秒杀） */
+    private _dmgWin = 0;
+    private _dmgAcc = 0;
 
     // ===== 召唤小怪 =====
     private _summonTimer = BOSS.SUMMON_INTERVAL * 0.8;
@@ -122,7 +128,14 @@ export class BossAI extends Component {
     init(x: number, y: number, mapIndex: number): void {
         const map = MAPS[mapIndex % MAPS.length];
         this.mapIndex = mapIndex % MAPS.length;
-        this.hp = this.maxHp = Math.round(map.bossHp);
+        // 防御：bossHp 配置异常（NaN/0/负数）时兜底 1200，避免 BOSS 一枪被秒
+        const hpRaw = Math.round(map.bossHp);
+        if (!(hpRaw > 0) || !Number.isFinite(hpRaw)) {
+            console.error('[BossAI] 异常 bossHp 配置', map.bossHp, 'mapIndex', this.mapIndex, '→ 兜底 1200');
+            this.hp = this.maxHp = 1200;
+        } else {
+            this.hp = this.maxHp = hpRaw;
+        }
         this._baseSpeed = map.bossSpeed;
         this.speed = map.bossSpeed;
         this.damage = map.bossDamage;
@@ -139,6 +152,10 @@ export class BossAI extends Component {
         this._chargeAngle = 0;
         this._chargeDist = 0;
         this._enrageTier = 0;
+        this._roarTimer = 0;
+        this._roarTier = 0;
+        this._dmgWin = 0;
+        this._dmgAcc = 0;
         this._summonTimer = BOSS.SUMMON_INTERVAL * 0.8;
         this._active = true;
         this._swimType = BOSS_SWIM[this.mapIndex % BOSS_SWIM.length];
@@ -268,6 +285,20 @@ export class BossAI extends Component {
         }
 
         if (!this.player || this.player.dead) return;
+
+        // 爆发抑制窗口到期 → 重置累计伤害
+        if (this._dmgWin > 0) {
+            this._dmgWin -= dt;
+            if (this._dmgWin <= 0) this._dmgAcc = 0;
+        }
+
+        // 转阶段咆哮：不追逐/不弹幕/不冲撞/不放技能（无敌由 hurtEnemy 保证）
+        if (this._roarTimer > 0) {
+            this.hitFlash = 0.1;   // 持续闪白，表示“无敌金身”
+            this._roarTimer -= dt;
+            if (this._roarTimer <= 0) this._roarFinish();
+            return;
+        }
 
         switch (this._chargeState) {
             case 'idle': this._updateIdle(dt); break;
@@ -984,6 +1015,23 @@ export class BossAI extends Component {
     /** 受击 */
     hurtEnemy(damage: number, bx: number, by: number): void {
         if (!this._active) return;
+        // 转阶段咆哮期间无敌：保证演出必然走完，不被高 DPS 直接跳过
+        if (this._roarTimer > 0) return;
+        // 诊断：单次伤害 ≥90% 最大血量属于异常（正常渠道无此数值），打印现场便于定位"一枪秒Boss"
+        if (damage >= this.maxHp * 0.9) {
+            console.error('[BossAI] 异常大伤害', { damage, maxHp: this.maxHp, remainHp: this.hp, x: bx, y: by, speed: this.speed, damageAttr: (this as any).damage });
+        }
+        // 限幅 1：单发封顶（削榴弹 AOE / 高伤武器的单发峰值）
+        const perHitCap = this.maxHp * BOSS.DMG_CAP_RATIO;
+        if (damage > perHitCap) damage = perHitCap;
+        // 限幅 2：滑动窗口累计封顶——霰弹+多重射击会同帧多次调用本方法，
+        // 只封单发依旧能瞬间打空，故必须限制窗口内总量
+        if (this._dmgWin <= 0) { this._dmgWin = BOSS.DMG_WINDOW; this._dmgAcc = 0; }
+        const room = this.maxHp * BOSS.DMG_WINDOW_CAP - this._dmgAcc;
+        if (room <= 0) return;
+        if (damage > room) damage = room;
+        this._dmgAcc += damage;
+
         this.hp -= damage;
         this.hitFlash = 0.08;
         const pos = this.node.position;
@@ -997,22 +1045,55 @@ export class BossAI extends Component {
         if (this.hp <= 0) this._kill();
     }
 
-    /** 狂暴检测：血量跨过 <50% / <30% 阈值时升级狂暴档位并施加增益 */
+    /** 狂暴检测：血量跨过 <50% / <30% 阈值时进入转阶段咆哮（而不是静默改数值） */
     private _checkEnrage(): void {
+        if (this.hp <= 0 || this._roarTimer > 0) return;
         const ratio = this.hp / this.maxHp;
         let tier = 0;
         if (ratio < BOSS.ENRAGE_HP_2) tier = 2;
         else if (ratio < BOSS.ENRAGE_HP_1) tier = 1;
-        if (tier > this._enrageTier) {
-            this._enrageTier = tier;
-            this.speed = this._baseSpeed * (tier >= 2 ? BOSS.ENRAGE_SPEED_MULT_2 : BOSS.ENRAGE_SPEED_MULT_1);
-            if (tier >= 2) {
-                this.gameManager?.notify('☠️ BOSS 彻底狂暴！双环弹幕 + 追踪弹 + 召唤小怪！');
-            } else {
-                this.gameManager?.notify('🔥 BOSS 狂暴了！更快更猛！');
-            }
-            this.audioManager?.laserWarn();
+        if (tier > this._enrageTier) this._beginRoar(tier);
+    }
+
+    /** 开始转阶段咆哮：先提升档位（使接下来的技能自带双环/追踪属性），
+     *  震开玩家打断贴身输出，咆哮结束时强制释放该阶段代表技 */
+    private _beginRoar(tier: number): void {
+        this._roarTier = tier;
+        this._enrageTier = tier;
+        this._roarTimer = BOSS.ROAR_TIME;
+        this.speed = this._baseSpeed * (tier >= 2 ? BOSS.ENRAGE_SPEED_MULT_2 : BOSS.ENRAGE_SPEED_MULT_1);
+        // 咆哮中不能带着冲撞/跳跃轨迹，归位到 idle 避免演出后立刻位移
+        this._chargeState = 'idle';
+        this._chargeCd = BOSS.CHARGE_INTERVAL;
+        this._setWarnVisible(false);
+        this.audioManager?.laserWarn();
+        // 震开玩家（externalVel 走 PlayerController 的 moveResolve，撞墙自然被解析）
+        if (this.player && !this.player.dead) {
+            const ppos = this.player.node.position;
+            const pos = this.node.position;
+            const a = Math.atan2(ppos.y - pos.y, ppos.x - pos.x);
+            this.player.externalVelX = Math.cos(a) * BOSS.ROAR_PUSH;
+            this.player.externalVelY = Math.sin(a) * BOSS.ROAR_PUSH;
         }
+        if (tier >= 2) this.gameManager?.notify('☠️ BOSS 彻底狂暴！双环弹幕 + 追踪弹 + 召唤小怪！');
+        else this.gameManager?.notify('🔥 BOSS 狂暴了！更快更猛！');
+    }
+
+    /** 咆哮结束：强制释放该阶段代表技，保证玩家一定看到这些机制 */
+    private _roarFinish(): void {
+        this._roarTimer = 0;
+        const tier = this._roarTier;
+        if (!this.player || this.player.dead || this.hp <= 0) return;
+        // 一档：必然召唤一波小怪；二档：双环弹幕 + 追踪弹齐发（_enrageTier 已为 2，
+        // _burstBullets 自动出双环、_aimedFanBullets 自动出追踪弹）
+        if (tier >= 1) this._summonMinions();
+        if (tier >= 2) {
+            this._burstBullets();
+            this._aimedFanBullets();
+        }
+        // 技能节奏从咆哮结束重新起算，避免与代表技叠在同一帧把玩家压死
+        this._attackTimer = this._attackInterval();
+        this._summonTimer = BOSS.SUMMON_INTERVAL;
     }
 
     private _kill(): void {

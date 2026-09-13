@@ -42,7 +42,7 @@ export class MenuUI extends Component {
         // 动态创建菜单 UI
         createPanel(content, 0, 0, 540, 470, new Color(6, 28, 50, 235), 24);
 
-        this.titleLabel = createLabel(content, '🐟 小丑鱼大冒险', 0, 140, 52, new Color(255, 218, 110, 255));
+        this.titleLabel = createLabel(content, '🐟 小丑鱼深海冒险', 0, 140, 48, new Color(255, 218, 110, 255));
         createLabel(content, '深海生存 · 升级进化', 0, 76, 22, new Color(170, 205, 230, 255));
 
         const start = createButton(content, '▶ 点击开始', 0, -20, () => {
